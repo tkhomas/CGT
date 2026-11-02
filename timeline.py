@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from models import ACTION_ORDER, Event
+from models import ACTION_ORDER, Action, Event
 
 
 def build_global_timeline(events: list[Event]) -> list[Event]:
@@ -33,3 +33,25 @@ def group_by_ticker(timeline: list[Event]) -> dict[str, list[Event]]:
     for event in timeline:
         timelines.setdefault(event.symbol, []).append(event)
     return dict(sorted(timelines.items()))
+
+
+def group_by_action(timeline: list[Event]) -> dict[Action, list[Event]]:
+    """Per-action views, derived from the global timeline.
+
+    Same idea as group_by_ticker, for reporting separation:
+    dividends and interest are separated by filtering the
+    timeline, not by storing copies of them in the portfolio.
+    """
+    groups: dict[Action, list[Event]] = {}
+    for event in timeline:
+        groups.setdefault(event.action, []).append(event)
+    return dict(
+        sorted(
+            groups.items(),
+            key=lambda item: (
+                ACTION_ORDER.index(item[0])
+                if item[0] in ACTION_ORDER
+                else len(ACTION_ORDER)
+            ),
+        )
+    )

@@ -35,7 +35,7 @@ class Currency(Enum):
 
 @dataclass
 class ProviderConfig:
-    name: str  # folder name under input/, not a field in config.json
+    name: str
     date_format: str
     currency: Currency
 
