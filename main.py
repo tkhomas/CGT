@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI entry point: parse provider CSVs into internal events.
+"""CLI entry point: parse, build a global timeline, dispatch to processors.
 
 Layout, with --data-dir defaulting to "data":
   <data-dir>/input/<provider>/config.json   required per provider
@@ -14,8 +14,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from models import Event
 from parsing import parse_csv
+from portfolio import Portfolio
+from processors import dispatch
 from providers import find_inputs
+from timeline import build_global_timeline
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -45,14 +49,20 @@ def main(argv: list[str] | None = None) -> int:
         all_events.extend(events)
         total_skipped += skipped
 
-    for event in all_events:
-        print(event)
-    print(
-        f"Parsed {len(all_events)} Sell event(s), "
-        f"skipped {total_skipped}, from {len(inputs)} file(s)."
-    )
-    print(f"Data dir: {data_dir}, output dir: {output_dir}, cache dir: {cache_dir}")
+    timeline = build_global_timeline(all_events)
+    portfolio = Portfolio()
+    for event in timeline:
+        dispatch(event, portfolio)
+
+    report(portfolio, timeline)
     return 0
+
+
+def report(portfolio: Portfolio, timeline: list[Event]) -> None:
+    # TODO: reporting not implemented yet.
+    # Will include: portfolio holdings, per-ticker breakdown,
+    # per-action breakdown, and per-tax-year gains.
+    pass
 
 
 if __name__ == "__main__":

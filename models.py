@@ -10,7 +10,17 @@ from pathlib import Path
 class Action(Enum):
     BUY = "buy"
     SELL = "sell"
-    DIVIDEND = "dividend"
+
+
+# Global ordering within a single date, as a simple list.
+# Earlier in the list means earlier in processing that day.
+# Dividend before Interest here is arbitrary, their relative
+# order does not matter. A new action is added to this list
+# in the same chunk as its processor, never before.
+ACTION_ORDER: list[Action] = [
+    Action.SELL,
+    Action.BUY,
+]
 
 
 class Currency(Enum):

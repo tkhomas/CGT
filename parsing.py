@@ -56,16 +56,6 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[Event], int]:
             if action is None:
                 skipped += 1
                 continue
-            if action != Action.SELL:
-                # Known action, but not processed in this first step.
-                print(
-                    f"Warning: {path.name}:{reader.line_num}: "
-                    f"known Action {action.value!r} not processed yet, "
-                    f"skipped",
-                    file=sys.stderr,
-                )
-                skipped += 1
-                continue
 
             quantity_decimal = Decimal((row["Quantity"] or "0").strip())
             if quantity_decimal != quantity_decimal.to_integral_value():
