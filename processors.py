@@ -10,10 +10,10 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 
+from matching import State
 from models import Action, Event
-from portfolio import Portfolio
 
-ProcessorFunc = Callable[[Event, Portfolio], None]
+ProcessorFunc = Callable[[Event, State], None]
 
 PROCESSORS: dict[Action, ProcessorFunc] = {}
 
@@ -27,20 +27,18 @@ def register(*actions: Action) -> Callable[[ProcessorFunc], ProcessorFunc]:
     return decorator
 
 
+def do_nothing(event: Event, state: State) -> None:
+    """Not currently registered. Kept for future actions that
+    truly should be ignored, like cash in and out."""
+    return
+
+
 @register(Action.BUY, Action.SELL)
-def do_nothing(event: Event, portfolio: Portfolio) -> None:
-    """Intentionally do nothing, for now.
-
-    Buy and Sell currently have no matching logic yet, so
-    they do nothing to the portfolio. When the matcher is
-    built, it will replace this registration for Buy and
-    Sell in the same chunk. do_nothing itself stays, for
-    events later that truly should be ignored.
-    """
-    return None
+def process_buy_sell(event: Event, state: State) -> None:
+    state.matcher.process(event, state.portfolio)
 
 
-def dispatch(event: Event, portfolio: Portfolio) -> None:
+def dispatch(event: Event, state: State) -> None:
     processor = PROCESSORS.get(event.action)
     if processor is None:
         print(
@@ -49,4 +47,4 @@ def dispatch(event: Event, portfolio: Portfolio) -> None:
             file=sys.stderr,
         )
         return
-    processor(event, portfolio)
+    processor(event, state)

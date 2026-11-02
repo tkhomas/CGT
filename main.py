@@ -14,9 +14,9 @@ import argparse
 import sys
 from pathlib import Path
 
+from matching import PoolInsufficientError, State
 from models import Event
 from parsing import parse_csv
-from portfolio import Portfolio
 from processors import dispatch
 from providers import find_inputs
 from timeline import build_global_timeline
@@ -50,18 +50,45 @@ def main(argv: list[str] | None = None) -> int:
         total_skipped += skipped
 
     timeline = build_global_timeline(all_events)
-    portfolio = Portfolio()
-    for event in timeline:
-        dispatch(event, portfolio)
+    state = State()
+    try:
+        for event in timeline:
+            dispatch(event, state)
+        state.matcher.finish(state.portfolio)
+    except PoolInsufficientError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        pool = state.portfolio.pools.get(exc.symbol)
+        if pool is not None:
+            print(
+                f"Debug: pool for {exc.symbol} at failure: "
+                f"{pool.units} units, total cost {pool.total_cost}",
+                file=sys.stderr,
+            )
+        print(f"Debug: all events for {exc.symbol}:", file=sys.stderr)
+        for event in timeline:
+            if event.symbol == exc.symbol:
+                print(
+                    f"  {event.date} {event.action.value} "
+                    f"{event.quantity} @ {event.price} "
+                    f"fees {event.fees} amount {event.amount} "
+                    f"{event.currency.value} {event.provider} "
+                    f"{event.source_file}:{event.row}",
+                    file=sys.stderr,
+                )
+        return 2
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
 
-    report(portfolio, timeline)
+    report(state, timeline)
     return 0
 
 
-def report(portfolio: Portfolio, timeline: list[Event]) -> None:
+def report(state: State, timeline: list[Event]) -> None:
     # TODO: reporting not implemented yet.
     # Will include: portfolio holdings, per-ticker breakdown,
-    # per-action breakdown, and per-tax-year gains.
+    # per-action breakdown, and per-tax-year gains, from
+    # state.portfolio and state.matcher.gains.
     pass
 
 

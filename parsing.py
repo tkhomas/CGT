@@ -71,6 +71,15 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[Event], int]:
             price = parse_money(row["Price"])
             amount = parse_money(row["Amount"])
             quantity = int(quantity_decimal)
+            if quantity_decimal <= 0:
+                print(
+                    f"Warning: {path.name}:{reader.line_num}: "
+                    f"quantity {quantity_decimal} not positive, skipped",
+                    file=sys.stderr,
+                )
+                skipped += 1
+                continue
+
             if abs(quantity * price - amount) > Decimal("0.01"):
                 print(
                     f"Warning: {path.name}:{reader.line_num}: "
