@@ -1,0 +1,3 @@
+# Default path for real user data, reports and cache - never commit
+/data/*
+!/data/README.md
