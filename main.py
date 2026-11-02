@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""First step: parse a provider CSV into internal events.
+"""First step: parse provider CSVs into internal events.
 
 Layout, with --data-dir defaulting to "data":
-  <data-dir>/input/    provider CSVs, any filename, CSV only
-  <data-dir>/output/   reports (later steps)
-  <data-dir>/output/cache/  internal cache, not a CLI option
+  <data-dir>/input/<provider>/config.json   required per provider
+  <data-dir>/input/<provider>/...           CSVs, any layout, recursive
+  <data-dir>/output/                        reports (later steps)
+  <data-dir>/output/cache/                  internal cache, not a CLI option
 """
 
 import argparse
 import csv
+import json
 import sys
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -35,16 +37,15 @@ class Currency(Enum):
 
 @dataclass
 class ProviderConfig:
-    name: str
+    name: str  # folder name under input/, not a field in config.json
     date_format: str
     currency: Currency
 
 
-EXAMPLE_PROVIDER = ProviderConfig(
-    name="test US provider",
-    date_format="%m/%d/%Y",
-    currency=Currency.USD,
-)
+@dataclass
+class ProviderInput:
+    path: Path
+    provider: ProviderConfig
 
 
 @dataclass
@@ -58,6 +59,7 @@ class Event:
     fees: Decimal
     amount: Decimal
     currency: Currency
+    provider: str
     source_file: str
     row: int
 
@@ -95,6 +97,50 @@ def parse_money(text):
     for symbol in ("$", "£", "€", "¥", "₹"):
         cleaned = cleaned.replace(symbol, "")
     return Decimal(cleaned.replace(",", "").strip())
+
+
+def load_provider_config(provider_dir):
+    """Load <provider>/config.json, or None with a warning."""
+    config_path = provider_dir / "config.json"
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(
+            f"Warning: provider {provider_dir.name}: "
+            f"cannot read config.json ({exc}), provider skipped",
+            file=sys.stderr,
+        )
+        return None
+    if not isinstance(data, dict):
+        print(
+            f"Warning: provider {provider_dir.name}: "
+            f"config.json is not an object, provider skipped",
+            file=sys.stderr,
+        )
+        return None
+    date_format = data.get("date_format")
+    if not isinstance(date_format, str) or not date_format:
+        print(
+            f"Warning: provider {provider_dir.name}: "
+            f"config.json missing date_format, provider skipped",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        currency = Currency(data.get("currency"))
+    except ValueError:
+        print(
+            f"Warning: provider {provider_dir.name}: "
+            f"config.json has unknown currency "
+            f"{data.get('currency')!r}, provider skipped",
+            file=sys.stderr,
+        )
+        return None
+    return ProviderConfig(
+        name=provider_dir.name,
+        date_format=date_format,
+        currency=currency,
+    )
 
 
 def parse_csv(path, provider):
@@ -150,6 +196,7 @@ def parse_csv(path, provider):
                     fees=parse_money(row.get("Fees & Comm")),
                     amount=amount,
                     currency=provider.currency,
+                    provider=provider.name,
                     source_file=path.name,
                     row=reader.line_num,
                 )
@@ -158,34 +205,62 @@ def parse_csv(path, provider):
 
 
 def find_inputs(data_dir):
-    """All CSVs under <data-dir>/input/, any filename.
+    """Collect CSVs, one provider folder at a time.
 
-    Any non-CSV file there is an error: it means a wrong or
-    unsupported file was placed in the input folder, and silently
-    skipping it could hide real data.
+    config.json files are skipped silently. Other non-CSV files
+    warn and are skipped, they do not stop the run.
     """
     input_dir = data_dir / "input"
     if not input_dir.is_dir():
         print(f"Error: input dir not found: {input_dir}", file=sys.stderr)
         return None
-    files = [
+
+    inputs = []
+    for entry in sorted(input_dir.iterdir()):
+        if entry.is_file() and not entry.name.startswith("."):
+            print(
+                f"Warning: {entry.name} directly under input/, "
+                f"expected a provider folder, skipped",
+                file=sys.stderr,
+            )
+
+    provider_dirs = [
         p
         for p in sorted(input_dir.iterdir())
-        if p.is_file() and not p.name.startswith(".")
+        if p.is_dir() and not p.name.startswith(".")
     ]
-    non_csv = [p for p in files if p.suffix.lower() != ".csv"]
-    if non_csv:
-        names = ", ".join(p.name for p in non_csv)
-        print(
-            f"Error: non-CSV file(s) in {input_dir}: {names}",
-            file=sys.stderr,
+    for provider_dir in provider_dirs:
+        config_path = provider_dir / "config.json"
+        if not config_path.is_file():
+            print(
+                f"Warning: provider {provider_dir.name}: "
+                f"no config.json, provider skipped",
+                file=sys.stderr,
+            )
+            continue
+        provider = load_provider_config(provider_dir)
+        if provider is None:
+            continue
+        files = sorted(
+            p
+            for p in provider_dir.rglob("*")
+            if p.is_file() and not p.name.startswith(".")
         )
+        for path in files:
+            if path.name == "config.json":
+                continue  # config, not data, no warning
+            if path.suffix.lower() == ".csv":
+                inputs.append(ProviderInput(path=path, provider=provider))
+            else:
+                print(
+                    f"Warning: {path} is not a CSV or config file, skipped",
+                    file=sys.stderr,
+                )
+
+    if not inputs:
+        print(f"Error: no CSV found under {input_dir}", file=sys.stderr)
         return None
-    csv_files = [p for p in files if p.suffix.lower() == ".csv"]
-    if not csv_files:
-        print(f"Error: no CSV found in {input_dir}", file=sys.stderr)
-        return None
-    return csv_files
+    return inputs
 
 
 def main(argv=None):
@@ -210,8 +285,8 @@ def main(argv=None):
 
     all_events = []
     total_skipped = 0
-    for path in inputs:
-        events, skipped = parse_csv(path, EXAMPLE_PROVIDER)
+    for inp in inputs:
+        events, skipped = parse_csv(inp.path, inp.provider)
         all_events.extend(events)
         total_skipped += skipped
 
