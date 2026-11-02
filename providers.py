@@ -8,23 +8,33 @@ from pathlib import Path
 
 from models import Currency, ProviderConfig, ProviderInput
 
+CONFIG_FILENAME = "config.json"
+
 
 def load_provider_config(provider_dir: Path) -> ProviderConfig | None:
-    """Load <provider>/config.json, or None with a warning."""
-    config_path = provider_dir / "config.json"
+    """Load a provider config file, or None with a warning."""
+    config_path = provider_dir / CONFIG_FILENAME
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(
             f"Warning: provider {provider_dir.name}: "
-            f"cannot read config.json ({exc}), provider skipped",
+            f"cannot read {CONFIG_FILENAME} ({exc}), provider skipped",
             file=sys.stderr,
         )
         return None
     if not isinstance(data, dict):
         print(
             f"Warning: provider {provider_dir.name}: "
-            f"config.json is not an object, provider skipped",
+            f"{CONFIG_FILENAME} is not an object, provider skipped",
+            file=sys.stderr,
+        )
+        return None
+    name = data.get("name")
+    if not isinstance(name, str) or not name.strip():
+        print(
+            f"Warning: provider {provider_dir.name}: "
+            f"{CONFIG_FILENAME} missing name, provider skipped",
             file=sys.stderr,
         )
         return None
@@ -32,7 +42,7 @@ def load_provider_config(provider_dir: Path) -> ProviderConfig | None:
     if not isinstance(date_format, str) or not date_format:
         print(
             f"Warning: provider {provider_dir.name}: "
-            f"config.json missing date_format, provider skipped",
+            f"{CONFIG_FILENAME} missing date_format, provider skipped",
             file=sys.stderr,
         )
         return None
@@ -41,13 +51,13 @@ def load_provider_config(provider_dir: Path) -> ProviderConfig | None:
     except ValueError:
         print(
             f"Warning: provider {provider_dir.name}: "
-            f"config.json has unknown currency "
+            f"{CONFIG_FILENAME} has unknown currency "
             f"{data.get('currency')!r}, provider skipped",
             file=sys.stderr,
         )
         return None
     return ProviderConfig(
-        name=provider_dir.name,
+        name=name.strip(),
         date_format=date_format,
         currency=currency,
     )
@@ -56,7 +66,7 @@ def load_provider_config(provider_dir: Path) -> ProviderConfig | None:
 def find_inputs(data_dir: Path) -> list[ProviderInput] | None:
     """Collect CSVs, one provider folder at a time.
 
-    config.json files are skipped silently. Other non-CSV files
+    Config files are skipped silently. Other non-CSV files
     warn and are skipped, they do not stop the run.
     """
     input_dir = data_dir / "input"
@@ -65,6 +75,7 @@ def find_inputs(data_dir: Path) -> list[ProviderInput] | None:
         return None
 
     inputs = []
+    seen_names = set()
     for entry in sorted(input_dir.iterdir()):
         if entry.is_file() and not entry.name.startswith("."):
             print(
@@ -79,24 +90,33 @@ def find_inputs(data_dir: Path) -> list[ProviderInput] | None:
         if p.is_dir() and not p.name.startswith(".")
     ]
     for provider_dir in provider_dirs:
-        config_path = provider_dir / "config.json"
+        config_path = provider_dir / CONFIG_FILENAME
         if not config_path.is_file():
             print(
                 f"Warning: provider {provider_dir.name}: "
-                f"no config.json, provider skipped",
+                f"no {CONFIG_FILENAME}, provider skipped",
                 file=sys.stderr,
             )
             continue
         provider = load_provider_config(provider_dir)
         if provider is None:
             continue
+        if provider.name in seen_names:
+            print(
+                f"Warning: provider {provider_dir.name}: "
+                f"duplicate provider name {provider.name!r}, "
+                f"provider skipped",
+                file=sys.stderr,
+            )
+            continue
+        seen_names.add(provider.name)
         files = sorted(
             p
             for p in provider_dir.rglob("*")
             if p.is_file() and not p.name.startswith(".")
         )
         for path in files:
-            if path.name == "config.json":
+            if path.name == CONFIG_FILENAME:
                 continue  # config, not data, no warning
             if path.suffix.lower() == ".csv":
                 inputs.append(ProviderInput(path=path, provider=provider))
