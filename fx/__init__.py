@@ -6,12 +6,20 @@ The real code lives in fx/converter.py and fx/providers.py.
 """
 
 from fx.converter import FxConverter, FxRateMissingError
-from fx.providers import FxProvider, HmrcXmlProvider, TradeTariffProvider
+from fx.providers import (
+    FxProvider,
+    HmrcXmlProvider,
+    TradeTariffProvider,
+    UserProvidedRatesProvider,
+    UserRateNotFoundError,
+)
 
 __all__ = [
     "FxConverter",
-    "FxRateMissingError",
     "FxProvider",
+    "FxRateMissingError",
     "HmrcXmlProvider",
     "TradeTariffProvider",
+    "UserProvidedRatesProvider",
+    "UserRateNotFoundError",
 ]

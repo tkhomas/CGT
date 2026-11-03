@@ -7,7 +7,7 @@ Layout, with --data-dir defaulting to "data":
   <data-dir>/output/                        reports (later steps)
   <data-dir>/output/cache/                  internal cache, not a CLI option
   <data-dir>/fx/user-provided.json          single file, all manual FX rates,
-                                            ideally empty {}, last resort only
+                                          ideally empty [], last resort only
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
         return 2
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError, TypeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 

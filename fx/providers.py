@@ -20,12 +20,22 @@ not inverted.
 from __future__ import annotations
 
 import csv
+import json
+import sys
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from pathlib import Path
 
 from fx.downloader import download_file
 from models import Currency
+
+
+class UserRateNotFoundError(LookupError):
+    """The user file exists, or is missing, but has no rate for this month/currency.
+
+    Distinct from a malformed user file, which raises ValueError
+    or TypeError and should be reported as-is, not as a missing rate.
+    """
 
 
 class FxProvider(ABC):
@@ -168,3 +178,134 @@ class HmrcXmlProvider(FxProvider):
 
     def _parse(self, raw_path: Path, currency: Currency) -> Decimal:
         raise NotImplementedError("HMRC XML parse not implemented: format unverified")
+
+
+class UserProvidedRatesProvider(FxProvider):
+    """Local-only provider, no download component.
+
+    Single file, <data>/fx/user-provided.json, a plain list,
+    one entry per rate, to append to just add an entry:
+      [
+        {
+          "year": 2019,
+          "month": 1,
+          "currency": "USD",
+          "gbp_to_currency_rate": "9.9"
+        }
+      ]
+    gbp_to_currency_rate is original units per GBP, exactly
+    as HMRC publishes it, not inverted. Ideally empty, [],
+    or missing. A rate from it is labelled
+    user-provided:YYYY-MM, and a warning is printed when it
+    is first used in a run, once per distinct rate.
+    """
+
+    _FIELDS = ("year", "month", "currency", "gbp_to_currency_rate")
+
+    def __init__(self, user_path: Path) -> None:
+        # No fx_dir, no download. The local file is the whole source.
+        self.user_path = user_path
+        self._rates: dict[tuple[int, int, Currency], Decimal] | None = None
+        self._warned: set[tuple[int, int, Currency]] = set()
+
+    def source_label(self, year: int, month: int) -> str:
+        return f"user-provided:{year}-{month:02d}"
+
+    def raw_path(self, year: int, month: int) -> Path:
+        # Interface completeness only: this is the local file,
+        # not a downloadable raw file.
+        return self.user_path
+
+    def download_urls(self, year: int, month: int) -> list[str]:
+        # No download component.
+        return []
+
+    def get_rate(self, year: int, month: int, currency: Currency) -> Decimal:
+        rates = self._load()
+        rate = rates.get((year, month, currency))
+        if rate is None:
+            raise UserRateNotFoundError(
+                f"user-provided file has no rate for {currency.value} {year}-{month:02d}"
+            )
+        key = (year, month, currency)
+        if key not in self._warned:
+            self._warned.add(key)
+            print(
+                f"Warning: using user-provided FX rate for {currency.value} "
+                f"{year}-{month:02d}: {rate} units per GBP, from {self.user_path}, "
+                f"not from HMRC. This rate is manual and will be labelled "
+                f"user-provided:{year}-{month:02d} in all reporting.",
+                file=sys.stderr,
+            )
+        return rate
+
+    def _load(self) -> dict[tuple[int, int, Currency], Decimal]:
+        if self._rates is not None:
+            return self._rates
+        path = self.user_path
+        if not path.is_file():
+            self._rates = {}
+            return self._rates
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise ValueError(
+                f"user-provided file {path} is not valid JSON: {exc}"
+            ) from exc
+        if not isinstance(data, list):
+            raise TypeError(
+                f"user-provided file {path} is not a JSON list, "
+                'expected [{"year": ..., "month": ..., "currency": ..., '
+                '"gbp_to_currency_rate": ...}]'
+            )
+        rates: dict[tuple[int, int, Currency], Decimal] = {}
+        for index, entry in enumerate(data):
+            where = f"user-provided file {path}, entry {index}"
+            if not isinstance(entry, dict):
+                raise TypeError(f"{where} is not an object")
+            unknown = sorted(set(entry) - set(self._FIELDS))
+            if unknown:
+                raise ValueError(f"{where}: unknown field(s) {unknown}")
+            missing = [f for f in self._FIELDS if f not in entry]
+            if missing:
+                raise ValueError(f"{where}: missing field(s) {missing}")
+            year = self._parse_int(entry["year"], where, "year")
+            month = self._parse_int(entry["month"], where, "month")
+            if year <= 0:
+                raise ValueError(f"{where}: bad year {entry['year']!r}")
+            if not 1 <= month <= 12:
+                raise ValueError(f"{where}: bad month {entry['month']!r}")
+            try:
+                currency = Currency(str(entry["currency"]).strip().upper())
+            except ValueError:
+                raise ValueError(
+                    f"{where}: unknown currency {entry['currency']!r}"
+                ) from None
+            raw_rate = entry["gbp_to_currency_rate"]
+            if isinstance(raw_rate, bool) or raw_rate is None:
+                raise ValueError(f"{where}: bad rate {raw_rate!r}")
+            try:
+                rate = Decimal(str(raw_rate).strip())
+            except Exception as exc:
+                raise ValueError(f"{where}: bad rate {raw_rate!r}") from exc
+            if rate <= 0:
+                raise ValueError(f"{where}: non-positive rate {rate}")
+            key = (year, month, currency)
+            if key in rates:
+                raise ValueError(
+                    f"{where}: duplicate rate for {currency.value} {year}-{month:02d}"
+                )
+            rates[key] = rate
+        self._rates = rates
+        return self._rates
+
+    @staticmethod
+    def _parse_int(value: object, where: str, field: str) -> int:
+        # int, or a string of digits, nothing else: no floats, no bools.
+        if isinstance(value, bool):
+            raise TypeError(f"{where}: bad {field} {value!r}")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.strip().isdigit():
+            return int(value.strip())
+        raise ValueError(f"{where}: bad {field} {value!r}")

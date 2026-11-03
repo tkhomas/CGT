@@ -6,12 +6,14 @@ fx/providers.py, downloading lives in fx/downloader.py.
 Rate lookup, in order, one event at a time:
   1. Memory, rates already collected in this run.
   2. Provider, dispatched by year in _provider_for().
-  3. User-provided file, last resort only, see below.
+  3. UserProvidedRatesProvider, last resort only.
      It never overrides a working provider rate.
 
-User-provided: a single file, <data>/fx/user-provided.json,
-{"YYYY-MM": {"USD": "<rate>"}}, units per GBP.
-Ideally empty, {}, or missing. A rate from it is labelled
+UserProvidedRatesProvider is just another provider, local only,
+no download component: a single file, <data>/fx/user-provided.json,
+a plain list of {"year", "month", "currency",
+"gbp_to_currency_rate"} entries, units per GBP.
+Ideally empty, [], or missing. A rate from it is labelled
 user-provided:YYYY-MM on every Event, and a warning is
 printed when it is first used in a run.
 
@@ -27,7 +29,13 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Self
 
-from fx.providers import FxProvider, HmrcXmlProvider, TradeTariffProvider
+from fx.providers import (
+    FxProvider,
+    HmrcXmlProvider,
+    TradeTariffProvider,
+    UserProvidedRatesProvider,
+    UserRateNotFoundError,
+)
 from models import Currency, Event, ParsedEvent, Pricing
 
 
@@ -63,11 +71,18 @@ class FxRateMissingError(RuntimeError):
             "To proceed, in this exceptional case only, provide the rate",
             "manually, as original units per GBP, exactly as HMRC publishes",
             "it, not inverted, in one of these explicit ways, then re-run:",
-            f"  1) Add it to the single user-provided file at {user_path},",
-            f"     under the {month_str} key, with this shape:",
-            f'     {{"{month_str}": {{"{currency.value}": "<rate>"}}}}',
+            f"  1) Append an entry to the single user-provided file at {user_path},",
+            "     with this shape, one entry per rate:",
+            "     [",
+            "       {",
+            f'         "year": {year},',
+            f'         "month": {month},',
+            f'         "currency": "{currency.value}",',
+            '         "gbp_to_currency_rate": "<rate>"',
+            "       }",
+            "     ]",
             "     Only the currencies you need are required in that file.",
-            "     Ideally this file is empty, {}, meaning no manual",
+            "     Ideally this file is empty, [], meaning no manual",
             "     rates were needed. A rate from it will be labelled",
             "     user-provided in all reporting, so it is visible,",
             "     not hidden as an HMRC rate.",
@@ -94,9 +109,7 @@ class FxConverter:
         self.diagnostic_path = self.fx_dir / "diagnostic.json"
         # (year, month, currency) -> (original_units_per_gbp, fx_source)
         self._rates: dict[tuple[int, int, Currency], tuple[Decimal, str]] = {}
-        # Single user file, loaded once per run, or None if not loaded yet.
-        # Missing file means empty, no error, that is the ideal state.
-        self._user_rates: dict[tuple[int, int, Currency], Decimal] | None = None
+        self._user_provider = UserProvidedRatesProvider(user_path)
 
     def __enter__(self) -> Self:
         return self
@@ -120,89 +133,6 @@ class FxConverter:
             return HmrcXmlProvider(self.fx_dir)
         return None
 
-    # -- user-provided layer, single file, last resort --
-
-    def _load_user_file(self) -> dict[tuple[int, int, Currency], Decimal]:
-        if self._user_rates is not None:
-            return self._user_rates
-        path = self.user_path
-        if not path.is_file():
-            self._user_rates = {}
-            return self._user_rates
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001
-            raise ValueError(
-                f"user-provided file {path} is not valid JSON: {exc}"
-            ) from exc
-        if not isinstance(data, dict):
-            raise TypeError(
-                f"user-provided file {path} is not a JSON object, "
-                f'expected {{"YYYY-MM": {{"USD": "<rate>"}}}}'
-            )
-        rates: dict[tuple[int, int, Currency], Decimal] = {}
-        for month_text, month_rates_raw in data.items():
-            parts = str(month_text).strip().split("-")
-            if len(parts) != 2:
-                raise ValueError(
-                    f"user-provided file {path}: bad month key {month_text!r}, "
-                    "expected YYYY-MM"
-                )
-            try:
-                year = int(parts[0])
-                month = int(parts[1])
-            except ValueError:
-                raise ValueError(
-                    f"user-provided file {path}: bad month key {month_text!r}, "
-                    "expected YYYY-MM"
-                ) from None
-            if not 1 <= month <= 12:
-                raise ValueError(f"user-provided file {path}: bad month {month_text!r}")
-            if not isinstance(month_rates_raw, dict):
-                raise TypeError(
-                    f"user-provided file {path}: rates for {month_text} are not an object"
-                )
-            for code_text, rate_text in month_rates_raw.items():
-                try:
-                    currency = Currency(str(code_text).strip().upper())
-                except ValueError:
-                    raise ValueError(
-                        f"user-provided file {path}: unknown currency "
-                        f"{code_text!r} for {month_text}"
-                    ) from None
-                try:
-                    rate = Decimal(str(rate_text).strip())
-                except Exception as exc:  # noqa: BLE001
-                    raise ValueError(
-                        f"user-provided file {path}: bad rate for "
-                        f"{code_text} {month_text}: {rate_text!r}"
-                    ) from exc
-                if rate <= 0:
-                    raise ValueError(
-                        f"user-provided file {path}: non-positive rate for "
-                        f"{code_text} {month_text}: {rate}"
-                    )
-                rates[(year, month, currency)] = rate
-        self._user_rates = rates
-        return self._user_rates
-
-    def _user_rate(self, currency: Currency, year: int, month: int) -> Decimal | None:
-        """Last-resort rate. Warns on stderr once per distinct rate used."""
-
-        rates = self._load_user_file()
-        rate = rates.get((year, month, currency))
-        if rate is None:
-            return None
-        month_str = f"{year}-{month:02d}"
-        print(
-            f"Warning: using user-provided FX rate for {currency.value} "
-            f"{month_str}: {rate} units per GBP, from {self.user_path}, "
-            f"not from HMRC. This rate is manual and will be labelled "
-            f"user-provided:{month_str} in all reporting.",
-            file=sys.stderr,
-        )
-        return rate
-
     # -- conversion, one by one --
 
     def get_rate(
@@ -213,11 +143,9 @@ class FxConverter:
         key = (year, month, currency)
         if key in self._rates:
             return self._rates[key]
-        month_str = f"{year}-{month:02d}"
-        # Provider first. Only if it fails, or does not
-        # contain this currency, do we fall through to
-        # the user file, as last resort. One currency
-        # at a time, no month dict in the converter.
+        # Dedicated provider first. If it fails, or there is
+        # no provider for this year, fall through to the
+        # user provider, last resort only.
         provider = self._provider_for(year)
         provider_error: str | None = None
         raw_path: Path | None = None
@@ -233,20 +161,22 @@ class FxConverter:
                 source = provider.source_label(year, month)
                 self._rates[key] = (rate, source)
                 return self._rates[key]
-        # Last resort: user-provided file.
-        user_rate = self._user_rate(currency, year, month)
-        if user_rate is not None:
-            source = f"user-provided:{month_str}"
-            self._rates[key] = (user_rate, source)
-            return self._rates[key]
-        raise FxRateMissingError(
-            currency,
-            year,
-            month,
-            self.user_path,
-            raw_path,
-            provider_error or "no rate found",
-        )
+        try:
+            rate = self._user_provider.get_rate(year, month, currency)
+        except UserRateNotFoundError:
+            raise FxRateMissingError(
+                currency,
+                year,
+                month,
+                self.user_path,
+                raw_path,
+                provider_error or "no rate found",
+            )
+        # Malformed user file errors (ValueError, TypeError)
+        # are not caught here, they propagate to main as-is.
+        source = self._user_provider.source_label(year, month)
+        self._rates[key] = (rate, source)
+        return self._rates[key]
 
     def convert_event(self, parsed: ParsedEvent) -> Event:
         rate, source = self.get_rate(
