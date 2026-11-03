@@ -22,11 +22,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import date
 from pathlib import Path
 
 from fx import FxConverter
 from matching import PoolInsufficientError, State
-from models import Event
 from parsing import parse_csv
 from processors import dispatch
 from providers import find_inputs
@@ -139,14 +139,15 @@ def main(argv: list[str] | None = None) -> int:
     if not tax_years:
         print("No events, no reports written.")
         return 0
-    latest_date = max(event.date for event in timeline)
+
+    production_date = date.today()
     for tax_year in tax_years:
         year_disposals = disposals_for_year(all_disposals, tax_year)
         year_events, has_future_buys = events_for_year(
             timeline, year_disposals, tax_year
         )
         year_holdings = holdings_at_year_end(timeline, all_disposals, tax_year.end)
-        current = is_current(tax_year, latest_date)
+        current = is_current(tax_year, production_date)
         suffix = "_CURRENT" if current else ""
         portfolio_path = write_portfolio_report_year(
             year_holdings,

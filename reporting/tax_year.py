@@ -17,14 +17,18 @@ audit, even though its date is after that year's end.
 It is not counted in that year's holdings, which are at
 5 April.
 
-A tax year is final only once the data runs more than
-30 days past its end. Until then it is _CURRENT: a sale
-in its last 30 days could still be matched by a buy that
-has not arrived in the data yet, and, if it is the latest
-year, more events can still occur in it. _CURRENT is a
-do-not-submit warning, not just a name for the last year:
-when data ends in April or May, the previous year can
-still be _CURRENT as well.
+A tax year is final only once the report is produced more
+than 30 days past its end. Until then it is _CURRENT: a
+sale in its last 30 days could still be matched by a buy
+that has not happened yet, and, if it is the latest year,
+more events can still occur in it.
+
+Finality is judged against the production date, not the
+last event date. The last event date is not the end of
+the world: there may simply have been no transactions
+since then, and a year whose bed-and-breakfast window
+closed months ago in real time is final even if no later
+transaction happens to exist in the data.
 """
 
 from __future__ import annotations
@@ -80,15 +84,12 @@ def tax_years_for(timeline: list[Event], disposals: list[Disposal]) -> list[TaxY
     return sorted(years, key=lambda y: y.start_year)
 
 
-def is_current(tax_year: TaxYear, latest_event_date: date | None) -> bool:
-    if latest_event_date is None:
-        return True
-    # Final only once data runs past year end + 30 days:
-    # after that, no later buy can still match a sale in
-    # this year, and the year itself has ended in the data.
-    return not (
-        latest_event_date > tax_year.end + timedelta(days=BED_AND_BREAKFAST_DAYS)
-    )
+def is_current(tax_year: TaxYear, as_of: date) -> bool:
+    # as_of is the report production date, not the last
+    # event date. Final only once as_of is past year end
+    # + 30 days: after that, no later buy can still match
+    # a sale in this year, and the year itself has ended.
+    return not (as_of > tax_year.end + timedelta(days=BED_AND_BREAKFAST_DAYS))
 
 
 def disposals_for_year(disposals: list[Disposal], tax_year: TaxYear) -> list[Disposal]:
