@@ -1,14 +1,20 @@
 """HTML reports, self-contained: inline CSS, no external assets, no JS.
 
-Two files, both with all events, no filtering:
+Two files per UK tax year, both with all events, no filtering:
 
-- portfolio.html: holdings (Section 104 pools, units and cost,
-  so units per stock are easy to verify) plus all events,
-  including internal source file references.
-- disposals.html: summary totals, disposals, plus all events
-  since the start, in chronological order. No internal file
-  names here: they mean nothing to HMRC. FX rates instead
-  link to the actual monthly source file they came from.
+- portfolio-<year>.html: holdings at the end of that tax
+  year (Section 104 pools, units and cost, so units per
+  stock are easy to verify) plus all events, including
+  internal source file references.
+- disposals-<year>.html: summary totals and disposals for
+  that tax year only, plus all events since the start, in
+  chronological order. No internal file names here: they
+  mean nothing to HMRC. FX rates instead link to the
+  actual monthly source file they came from.
+
+A tax year that is not final gets _CURRENT in its file
+name and a banner in the report: do not submit it yet.
+See reporting/tax_year.py for what makes a year final.
 
 Display only: amounts are shown to the penny. Calculations
 in the matcher use unrounded Decimal values, so a displayed
@@ -18,12 +24,14 @@ row can differ by a penny from a re-addition of displayed rows.
 from __future__ import annotations
 
 import html
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
 from fx.providers import HmrcXmlProvider, TradeTariffProvider
-from matching import State
+from matching import Disposal
 from models import Event
+from reporting.tax_year import TaxYear
 
 
 def _gbp(value: Decimal) -> str:
@@ -90,26 +98,41 @@ def _fx_cell(fx_source: str) -> str:
     return f'<a href="{_esc(url)}">{_esc(text)}</a>'
 
 
-def _holdings_rows(state: State) -> str:
-    pools = sorted(state.portfolio.pools.values(), key=lambda p: p.symbol)
-    if not pools:
+def _holdings_rows(holdings: dict[str, tuple[int, Decimal]]) -> str:
+    if not holdings:
         return "<tr><td colspan='3'>No holdings.</td></tr>"
     rows = []
-    for pool in pools:
+    for symbol, (units, total_cost) in sorted(holdings.items()):
         rows.append(
-            f"<tr><td>{_esc(pool.symbol)}</td>"
-            f"<td class='num'>{pool.units}</td>"
-            f"<td class='num'>{_gbp(pool.total_cost)}</td></tr>"
+            f"<tr><td>{_esc(symbol)}</td>"
+            f"<td class='num'>{units}</td>"
+            f"<td class='num'>{_gbp(total_cost)}</td></tr>"
         )
     return "\n".join(rows)
 
 
-def _disposals_rows(state: State) -> str:
-    disposals = state.matcher.gains.disposals
+def _disposals_rows(disposals: list[Disposal]) -> str:
     if not disposals:
         return "<tr><td colspan='8'>No disposals.</td></tr>"
+    # The matcher appends disposals in resolution order, not
+    # sell-date order: a bed-and-breakfast disposal only exists
+    # when its buy arrives, a pool disposal only when its queue
+    # ages out. The report is read by sell date, so sort here,
+    # in reporting, not in the matcher. Same sell date and
+    # symbol: same-day, then bed-and-breakfast, then pool,
+    # then by buy date. Totals are unaffected by the order.
+    match_order = {"same-day": 0, "bed-and-breakfast": 1, "pool": 2}
+    ordered = sorted(
+        disposals,
+        key=lambda d: (
+            d.sell_date,
+            d.symbol,
+            match_order[d.match_type.value],
+            d.buy_date or date.min,
+        ),
+    )
     rows = []
-    for disposal in disposals:
+    for disposal in ordered:
         buy_date = disposal.buy_date.isoformat() if disposal.buy_date else "—"
         rows.append(
             f"<tr><td>{disposal.sell_date.isoformat()}</td>"
@@ -174,7 +197,17 @@ def _events_table(timeline: list[Event], internal_source: bool) -> str:
     )
 
 
-def _page(title: str, heading: str, note: str, body: str) -> str:
+def _page(
+    title: str, heading: str, note: str, body: str, is_current: bool = False
+) -> str:
+    banner = ""
+    if is_current:
+        banner = (
+            "<p class='note'><strong>CURRENT — unfinished tax year, "
+            "do not submit yet.</strong> Figures can still change: "
+            "more events can occur in this year, and a sale in its "
+            "last 30 days can still be matched by a later buy.</p>\n"
+        )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -194,7 +227,7 @@ th {{ background: #eee; }}
 <p class="note">Generated with the
 <a href="https://github.com/tkhomas/CGT">CGT calculator</a>,
 whose code is open source and can be audited.</p>
-<p class="note">{note}</p>
+{banner}<p class="note">{note}</p>
 {body}
 </body>
 </html>
@@ -230,59 +263,93 @@ figure is shown in both currencies.</p>
 """
 
 
-def build_portfolio_report(state: State, timeline: list[Event]) -> str:
-    body = f"""<h2>Holdings</h2>
+def build_portfolio_report_year(
+    holdings: dict[str, tuple[int, Decimal]],
+    events: list[Event],
+    tax_year: TaxYear,
+    is_current: bool,
+    has_future_buys: bool,
+) -> str:
+    future_note = (
+        " Buys after year end that match a disposal in this year "
+        "are shown in the events below for audit only; they are "
+        "not counted in these holdings."
+        if has_future_buys
+        else ""
+    )
+    body = f"""<h2>Holdings at end of {tax_year.label}</h2>
 <table>
 <tr><th>Symbol</th><th>Units</th><th>Total cost</th></tr>
-{_holdings_rows(state)}
+{_holdings_rows(holdings)}
 </table>
 
 <h2>All events</h2>
-{_events_table(timeline, internal_source=True)}
+{_events_table(events, internal_source=True)}
 
 {_methodology_html()}
 """
     return _page(
-        "Portfolio report",
-        "Portfolio report",
-        "Holdings are Section 104 pools: units and total cost per stock, "
-        "so units for any stock are easy to verify. All events follow, "
-        "in chronological order, with internal source references.",
+        f"Portfolio report {tax_year.label}",
+        f"Portfolio report {tax_year.label}",
+        f"Tax year {tax_year.label}: 6 April {tax_year.start_year} to "
+        f"5 April {tax_year.end_year}. Holdings are Section 104 pools: "
+        "units and total cost per stock, so units for any stock are "
+        "easy to verify. All events follow, in chronological order, "
+        f"with internal source references.{future_note}",
         body,
+        is_current=is_current,
     )
 
 
-def build_disposals_report(state: State, timeline: list[Event]) -> str:
-    gains = state.matcher.gains
-    body = f"""<h2>Summary</h2>
+def build_disposals_report_year(
+    disposals: list[Disposal],
+    events: list[Event],
+    tax_year: TaxYear,
+    is_current: bool,
+    has_future_buys: bool,
+) -> str:
+    total_proceeds = sum((d.proceeds for d in disposals), Decimal(0))
+    total_cost = sum((d.cost for d in disposals), Decimal(0))
+    total_gain = sum((d.gain for d in disposals), Decimal(0))
+    future_note = (
+        " Buys after year end that match a disposal in this year "
+        "are shown in the events below for audit only."
+        if has_future_buys
+        else ""
+    )
+    body = f"""<h2>Summary for {tax_year.label}</h2>
 <table>
-<tr><th>Total proceeds</th><td class='num'>{_gbp(gains.total_proceeds)}</td></tr>
-<tr><th>Total cost</th><td class='num'>{_gbp(gains.total_cost)}</td></tr>
-<tr><th>Total gain</th><td class='num'>{_gbp(gains.total_gain)}</td></tr>
-<tr><th>Disposals</th><td class='num'>{len(gains.disposals)}</td></tr>
+<tr><th>Total proceeds</th><td class='num'>{_gbp(total_proceeds)}</td></tr>
+<tr><th>Total cost</th><td class='num'>{_gbp(total_cost)}</td></tr>
+<tr><th>Total gain</th><td class='num'>{_gbp(total_gain)}</td></tr>
+<tr><th>Disposals</th><td class='num'>{len(disposals)}</td></tr>
 </table>
 
-<h2>Disposals</h2>
+<h2>Disposals in {tax_year.label}</h2>
 <table>
 <tr><th>Sell date</th><th>Symbol</th><th>Units</th><th>Proceeds</th>
 <th>Cost</th><th>Gain</th><th>Match type</th><th>Buy date</th></tr>
-{_disposals_rows(state)}
+{_disposals_rows(disposals)}
 </table>
 
 <h2>All events</h2>
-{_events_table(timeline, internal_source=False)}
+{_events_table(events, internal_source=False)}
 
 {_methodology_html()}
 """
     return _page(
-        "Disposals report",
-        "Disposals report",
-        "All amounts in GBP, shown to the penny; calculations use "
-        "unrounded Decimal values. Gains are global for now, no tax-year "
-        "split yet. All events follow, since the start, in chronological "
-        "order, with FX rates linked to their monthly source files. "
-        "No local file names are included.",
+        f"Disposals report {tax_year.label}",
+        f"Disposals report {tax_year.label}",
+        f"Tax year {tax_year.label}: 6 April {tax_year.start_year} to "
+        "5 April "
+        f"{tax_year.end_year}. All amounts in GBP, shown to the penny; "
+        "calculations use unrounded Decimal values. Only disposals "
+        "with a sell date in this tax year are listed above. All "
+        "events follow, since the start, in chronological order, "
+        "with FX rates linked to their monthly source files. "
+        f"No local file names are included.{future_note}",
         body,
+        is_current=is_current,
     )
 
 
@@ -292,9 +359,33 @@ def _write(path: Path, text: str) -> Path:
     return path
 
 
-def write_portfolio_report(state: State, timeline: list[Event], path: Path) -> Path:
-    return _write(path, build_portfolio_report(state, timeline))
+def write_portfolio_report_year(
+    holdings: dict[str, tuple[int, Decimal]],
+    events: list[Event],
+    tax_year: TaxYear,
+    is_current: bool,
+    has_future_buys: bool,
+    path: Path,
+) -> Path:
+    return _write(
+        path,
+        build_portfolio_report_year(
+            holdings, events, tax_year, is_current, has_future_buys
+        ),
+    )
 
 
-def write_disposals_report(state: State, timeline: list[Event], path: Path) -> Path:
-    return _write(path, build_disposals_report(state, timeline))
+def write_disposals_report_year(
+    disposals: list[Disposal],
+    events: list[Event],
+    tax_year: TaxYear,
+    is_current: bool,
+    has_future_buys: bool,
+    path: Path,
+) -> Path:
+    return _write(
+        path,
+        build_disposals_report_year(
+            disposals, events, tax_year, is_current, has_future_buys
+        ),
+    )

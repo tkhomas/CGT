@@ -4,7 +4,10 @@
 Layout, with --data-dir defaulting to "data":
   <data-dir>/input/<provider>/config.json   required per provider
   <data-dir>/input/<provider>/...           CSVs, any layout, recursive
-  <data-dir>/output/                        reports (later steps)
+  <data-dir>/output/                        reports, one pair per tax year
+  <data-dir>/output/portfolio-<year>.html   portfolio report for a tax year
+  <data-dir>/output/disposals-<year>.html   disposals report for a tax year
+  A tax year that is not final gets _CURRENT before .html.
   <data-dir>/output/cache/                  internal cache, not a CLI option
   <data-dir>/fx/user-provided.json          single file, all manual FX rates,
                                             ideally empty [], last resort only
@@ -23,10 +26,21 @@ from pathlib import Path
 
 from fx import FxConverter
 from matching import PoolInsufficientError, State
+from models import Event
 from parsing import parse_csv
 from processors import dispatch
 from providers import find_inputs
-from reporting.html import write_disposals_report, write_portfolio_report
+from reporting.html import (
+    write_disposals_report_year,
+    write_portfolio_report_year,
+)
+from reporting.tax_year import (
+    disposals_for_year,
+    events_for_year,
+    holdings_at_year_end,
+    is_current,
+    tax_years_for,
+)
 from timeline import build_global_timeline
 
 
@@ -38,6 +52,16 @@ def main(argv: list[str] | None = None) -> int:
         "--force-fx-download",
         action="store_true",
         help="Ignore cached FX files and redownload them.",
+    )
+    parser.add_argument(
+        "--clean-output",
+        action="store_true",
+        help="Delete existing report files in the output dir before "
+        "writing new ones. Only report files are deleted: "
+        "portfolio-*.html, disposals-*.html, and the old report.html. "
+        "Cache, inputs, and anything else are left alone. "
+        "Cleaning happens only after a successful run, so a "
+        "failed run never deletes the previous reports.",
     )
     args = parser.parse_args(argv)
 
@@ -106,15 +130,56 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
-    portfolio_path = write_portfolio_report(
-        state, timeline, output_dir / "portfolio.html"
-    )
-    disposals_path = write_disposals_report(
-        state, timeline, output_dir / "disposals.html"
-    )
-    print(f"Portfolio report written to {portfolio_path}")
-    print(f"Disposals report written to {disposals_path}")
+    if args.clean_output:
+        cleaned = clean_reports(output_dir)
+        print(f"Cleaned {cleaned} old report(s) from {output_dir}")
+
+    all_disposals = state.matcher.gains.disposals
+    tax_years = tax_years_for(timeline, all_disposals)
+    if not tax_years:
+        print("No events, no reports written.")
+        return 0
+    latest_date = max(event.date for event in timeline)
+    for tax_year in tax_years:
+        year_disposals = disposals_for_year(all_disposals, tax_year)
+        year_events, has_future_buys = events_for_year(
+            timeline, year_disposals, tax_year
+        )
+        year_holdings = holdings_at_year_end(timeline, all_disposals, tax_year.end)
+        current = is_current(tax_year, latest_date)
+        suffix = "_CURRENT" if current else ""
+        portfolio_path = write_portfolio_report_year(
+            year_holdings,
+            year_events,
+            tax_year,
+            current,
+            has_future_buys,
+            output_dir / f"portfolio-{tax_year.file_label}{suffix}.html",
+        )
+        disposals_path = write_disposals_report_year(
+            year_disposals,
+            year_events,
+            tax_year,
+            current,
+            has_future_buys,
+            output_dir / f"disposals-{tax_year.file_label}{suffix}.html",
+        )
+        print(f"Portfolio report written to {portfolio_path}")
+        print(f"Disposals report written to {disposals_path}")
     return 0
+
+
+def clean_reports(output_dir: Path) -> int:
+    # Report files only, never cache or inputs. Patterns are
+    # the ones this program writes, plus the old single
+    # report.html, which would otherwise go stale.
+    cleaned = 0
+    for pattern in ("portfolio-*.html", "disposals-*.html", "report.html"):
+        for path in output_dir.glob(pattern):
+            if path.is_file():
+                path.unlink()
+                cleaned += 1
+    return cleaned
 
 
 if __name__ == "__main__":
