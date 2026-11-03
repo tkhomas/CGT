@@ -23,10 +23,10 @@ from pathlib import Path
 
 from fx import FxConverter
 from matching import PoolInsufficientError, State
-from models import Event
 from parsing import parse_csv
 from processors import dispatch
 from providers import find_inputs
+from reporting.html import write_disposals_report, write_portfolio_report
 from timeline import build_global_timeline
 
 
@@ -106,16 +106,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
-    report(state, timeline)
+    portfolio_path = write_portfolio_report(
+        state, timeline, output_dir / "portfolio.html"
+    )
+    disposals_path = write_disposals_report(
+        state, timeline, output_dir / "disposals.html"
+    )
+    print(f"Portfolio report written to {portfolio_path}")
+    print(f"Disposals report written to {disposals_path}")
     return 0
-
-
-def report(state: State, timeline: list[Event]) -> None:
-    # TODO: reporting not implemented yet.
-    # Will include: portfolio holdings, per-ticker breakdown,
-    # per-action breakdown, and per-tax-year gains, from
-    # state.portfolio and state.matcher.gains.
-    pass
 
 
 if __name__ == "__main__":
