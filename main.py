@@ -6,6 +6,8 @@ Layout, with --data-dir defaulting to "data":
   <data-dir>/input/<provider>/...           CSVs, any layout, recursive
   <data-dir>/output/                        reports (later steps)
   <data-dir>/output/cache/                  internal cache, not a CLI option
+  <data-dir>/fx/user-provided.json          single file, all manual FX rates,
+                                            ideally empty {}, last resort only
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from fx import convert_events
+from fx import FxConverter
 from matching import PoolInsufficientError, State
 from models import Event
 from parsing import parse_csv
@@ -50,7 +52,13 @@ def main(argv: list[str] | None = None) -> int:
         all_parsed.extend(events)
         total_skipped += skipped
 
-    all_events = convert_events(all_parsed, cache_dir)
+    user_path = data_dir / "fx" / "user-provided.json"
+    try:
+        with FxConverter(cache_dir, user_path) as fx:
+            all_events = fx.convert_events(all_parsed)
+    except (RuntimeError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
 
     timeline = build_global_timeline(all_events)
     state = State()
