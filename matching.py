@@ -12,7 +12,8 @@ date if any. One Sell can become several Disposals.
 Gains are global for now, no tax-year split yet.
 
 UK CGT only, so all values must be in GBP. Conversion to GBP
-is a separate step before matching, not yet implemented, so
+is via fx.convert_events before matching. That module is
+currently a stub setting original_units_per_gbp to 1, so
 for now amounts are used as given.
 
 Pool insufficient should never happen. When it does, it screams
@@ -22,7 +23,6 @@ ticker. No cost-0 disposal is ever created for it.
 
 from __future__ import annotations
 
-import sys
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import date
@@ -112,7 +112,7 @@ class Matcher:
                 self._match_to_pool(queue.popleft(), portfolio)
 
     def _process_sell(self, event: Event) -> None:
-        proceeds_per_unit = (event.amount - event.fees) / event.quantity
+        proceeds_per_unit = (event.pricing.amount - event.pricing.fees) / event.quantity
         self.queues.setdefault(event.symbol, deque()).append(
             PendingSell(
                 event=event,
@@ -123,7 +123,7 @@ class Matcher:
 
     def _process_buy(self, event: Event, portfolio: Portfolio) -> None:
         buy_remaining_units = event.quantity
-        cost_per_unit = (event.amount + event.fees) / event.quantity
+        cost_per_unit = (event.pricing.amount + event.pricing.fees) / event.quantity
         queue = self.queues.setdefault(event.symbol, deque())
         while buy_remaining_units > 0 and queue:
             pending_sell = queue[0]

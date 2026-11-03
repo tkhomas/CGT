@@ -46,6 +46,50 @@ class ProviderInput:
     provider: ProviderConfig
 
 
+# What parsing knows, before FX. No Pricing yet, because
+# Pricing requires a rate, and parsing does not know it.
+@dataclass
+class ParsedEvent:
+    date: date
+    action: Action
+    symbol: str
+    description: str
+    quantity: int
+    original_currency: Currency
+    original_price: Decimal
+    original_amount: Decimal
+    original_fees: Decimal
+    provider: str
+    source_file: str
+    row: int
+
+
+@dataclass
+class Pricing:
+    original_currency: Currency
+    original_price: Decimal
+    original_amount: Decimal
+    original_fees: Decimal
+    original_units_per_gbp: Decimal
+    fx_source: str
+
+    @property
+    def price(self) -> Decimal:
+        return self.original_price / self.original_units_per_gbp
+
+    @property
+    def amount(self) -> Decimal:
+        return self.original_amount / self.original_units_per_gbp
+
+    @property
+    def fees(self) -> Decimal:
+        return self.original_fees / self.original_units_per_gbp
+
+    @property
+    def currency(self) -> Currency:
+        return Currency.GBP
+
+
 @dataclass
 class Event:
     date: date
@@ -53,10 +97,7 @@ class Event:
     symbol: str
     description: str
     quantity: int
-    price: Decimal
-    fees: Decimal
-    amount: Decimal
-    currency: Currency
+    pricing: Pricing
     provider: str
     source_file: str
     row: int

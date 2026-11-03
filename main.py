@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI entry point: parse, build a global timeline, dispatch to processors.
+"""CLI entry point: parse, convert to GBP, build a global timeline, dispatch.
 
 Layout, with --data-dir defaulting to "data":
   <data-dir>/input/<provider>/config.json   required per provider
@@ -14,6 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from fx import convert_events
 from matching import PoolInsufficientError, State
 from models import Event
 from parsing import parse_csv
@@ -42,12 +43,14 @@ def main(argv: list[str] | None = None) -> int:
     if inputs is None:
         return 2
 
-    all_events = []
+    all_parsed = []
     total_skipped = 0
     for inp in inputs:
         events, skipped = parse_csv(inp.path, inp.provider)
-        all_events.extend(events)
+        all_parsed.extend(events)
         total_skipped += skipped
+
+    all_events = convert_events(all_parsed, cache_dir)
 
     timeline = build_global_timeline(all_events)
     state = State()
@@ -69,9 +72,14 @@ def main(argv: list[str] | None = None) -> int:
             if event.symbol == exc.symbol:
                 print(
                     f"  {event.date} {event.action.value} "
-                    f"{event.quantity} @ {event.price} "
-                    f"fees {event.fees} amount {event.amount} "
-                    f"{event.currency.value} {event.provider} "
+                    f"{event.quantity} @ {event.pricing.price} "
+                    f"fees {event.pricing.fees} amount {event.pricing.amount} "
+                    f"{event.pricing.currency.value} "
+                    f"(orig {event.pricing.original_price} "
+                    f"{event.pricing.original_currency.value} @ "
+                    f"{event.pricing.original_units_per_gbp} "
+                    f"{event.pricing.fx_source}) "
+                    f"{event.provider} "
                     f"{event.source_file}:{event.row}",
                     file=sys.stderr,
                 )

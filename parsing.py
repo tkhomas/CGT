@@ -1,4 +1,4 @@
-"""CSV row parsing into internal Events."""
+"""CSV row parsing into ParsedEvents."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from models import Action, Event, ProviderConfig
+from models import Action, ParsedEvent, ProviderConfig
 
 
 def parse_date(text: str, date_format: str) -> date:
@@ -46,7 +46,7 @@ def parse_money(text: str | None) -> Decimal:
     return Decimal(cleaned.replace(",", "").strip())
 
 
-def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[Event], int]:
+def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], int]:
     events = []
     skipped = 0
     with path.open(newline="", encoding="utf-8-sig") as f:
@@ -88,16 +88,16 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[Event], int]:
                     file=sys.stderr,
                 )
             events.append(
-                Event(
+                ParsedEvent(
                     date=parse_date(row["Date"], provider.date_format),
                     action=action,
                     symbol=(row["Symbol"] or "").strip(),
                     description=(row["Description"] or "").strip(),
                     quantity=quantity,
-                    price=price,
-                    fees=parse_money(row.get("Fees & Comm")),
-                    amount=amount,
-                    currency=provider.currency,
+                    original_currency=provider.currency,
+                    original_price=price,
+                    original_amount=amount,
+                    original_fees=parse_money(row.get("Fees & Comm")),
                     provider=provider.name,
                     source_file=path.name,
                     row=reader.line_num,
