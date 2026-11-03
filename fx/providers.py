@@ -22,6 +22,7 @@ from __future__ import annotations
 import csv
 import json
 import sys
+import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from decimal import Decimal
 from pathlib import Path
@@ -158,7 +159,46 @@ class TradeTariffProvider(FxProvider):
 
 
 class HmrcXmlProvider(FxProvider):
-    """Historic source, 2015 to 2020 inclusive, HMRC XML per month."""
+    """Historic source, 2015 to 2020 inclusive, HMRC XML per month.
+
+    Monthly file at
+    https://www.hmrc.gov.uk/softwaredevelopers/rates/
+    exrates-monthly-MMYY.xml, e.g. Dec 2020 is
+    exrates-monthly-1220.xml.
+
+    Structure:
+    <exchangeRateMonthList Period="01/Dec/2020 to 31/Dec/2020">
+        <exchangeRate>
+        <countryName>USA</countryName>
+        <countryCode>US</countryCode>
+        <currencyName>Dollar</currencyName>
+        <currencyCode>USD</currencyCode>
+        <rateNew>1.3303</rateNew>
+        </exchangeRate>
+        ...
+    </exchangeRateMonthList>
+    No namespace, no encoding in the legacy declaration
+    (<?xml version="1.0"?>), rateNew is units per GBP.
+    A currency can repeat across countries: repeated rows
+    for the requested currency are folded only if every rate
+    agrees as Decimal, otherwise the file is rejected, never
+    silently last-wins.
+    """
+
+    _MONTH_ABBRS = (
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+    )
 
     def source_label(self, year: int, month: int) -> str:
         return f"hmrc-xml:{year}-{month:02d}"
@@ -168,19 +208,87 @@ class HmrcXmlProvider(FxProvider):
 
     def download_urls(self, year: int, month: int) -> list[str]:
         base = (
-            "https://www.hmrc.gov.uk/softwaredevelopers/"
-            f"{year}/{month:02d}{str(year)[-2:]}"
+            "https://www.hmrc.gov.uk/softwaredevelopers/rates/"
+            f"exrates-monthly-{month:02d}{str(year)[-2:]}"
         )
-        return [base + ".XML", base + ".xml"]
+        return [base + ".xml", base + ".XML"]
 
     def get_rate(self, year: int, month: int, currency: Currency) -> Decimal:
         raw_path = self.raw_path(year, month)
         if self.force_download or not raw_path.is_file():
             download_file(self.download_urls(year, month), raw_path)
-        return self._parse(raw_path, currency)
+        return self._parse(raw_path, currency, year, month)
 
-    def _parse(self, raw_path: Path, currency: Currency) -> Decimal:
-        raise NotImplementedError("HMRC XML parse not implemented: format unverified")
+    def _parse(
+        self, raw_path: Path, currency: Currency, year: int, month: int
+    ) -> Decimal:
+        try:
+            root = ET.parse(raw_path).getroot()
+        except ET.ParseError as exc:
+            raise ValueError(f"{raw_path}: invalid XML: {exc}") from exc
+        if root.tag != "exchangeRateMonthList":
+            raise ValueError(
+                f"{raw_path}: unexpected root element {root.tag!r}, "
+                "expected exchangeRateMonthList"
+            )
+        self._check_period(raw_path, root.get("Period"), year, month)
+        rate: Decimal | None = None
+        for row in root.findall("exchangeRate"):
+            code_text = row.findtext("currencyCode")
+            if code_text is None:
+                continue
+            try:
+                row_currency = Currency(code_text.strip().upper())
+            except ValueError:
+                # Not in our enum, e.g. ARS, XOF: not an error,
+                # the file simply carries more currencies than we use.
+                continue
+            if row_currency != currency:
+                continue
+            rate_text = row.findtext("rateNew")
+            if rate_text is None or not rate_text.strip():
+                raise ValueError(f"{raw_path}: missing rateNew for {currency.value}")
+            try:
+                row_rate = Decimal(rate_text.strip())
+            except Exception as exc:
+                raise ValueError(
+                    f"{raw_path}: bad rate for {currency.value}: {rate_text!r}"
+                ) from exc
+            if row_rate <= 0:
+                raise ValueError(
+                    f"{raw_path}: non-positive rate for {currency.value}: {row_rate}"
+                )
+            if rate is not None and row_rate != rate:
+                raise ValueError(
+                    f"{raw_path}: divergent rates for {currency.value}: "
+                    f"{rate} and {row_rate}"
+                )
+            rate = row_rate
+        if rate is None:
+            raise ValueError(f"{raw_path}: month file did not contain {currency.value}")
+        return rate
+
+    def _check_period(
+        self, raw_path: Path, period: str | None, year: int, month: int
+    ) -> None:
+        # Period="01/Dec/2020 to 31/Dec/2020". A served file for
+        # the wrong month must not silently give a wrong rate.
+        # Month names are mapped explicitly, not via strptime
+        # %b, which is locale-dependent.
+        if period is None:
+            raise ValueError(f"{raw_path}: missing Period attribute")
+        try:
+            start = period.split(" to ")[0]
+            _day, mon, period_year = start.split("/")
+            period_month = self._MONTH_ABBRS.index(mon) + 1
+            period_year_int = int(period_year)
+        except Exception as exc:
+            raise ValueError(f"{raw_path}: bad Period {period!r}") from exc
+        if (period_year_int, period_month) != (year, month):
+            raise ValueError(
+                f"{raw_path}: Period {period!r} does not match "
+                f"requested {year}-{month:02d}"
+            )
 
 
 class UserProvidedRatesProvider(FxProvider):
