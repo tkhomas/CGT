@@ -102,10 +102,13 @@ class FxRateMissingError(RuntimeError):
 class FxConverter:
     """Dispatch and caching only. Source specifics are providers."""
 
-    def __init__(self, cache_dir: Path, user_path: Path) -> None:
+    def __init__(
+        self, cache_dir: Path, user_path: Path, force_download: bool = False
+    ) -> None:
         self.cache_dir = cache_dir
         self.fx_dir = cache_dir / "fx"
         self.user_path = user_path
+        self.force_download = force_download
         self.diagnostic_path = self.fx_dir / "diagnostic.json"
         # (year, month, currency) -> (original_units_per_gbp, fx_source)
         self._rates: dict[tuple[int, int, Currency], tuple[Decimal, str]] = {}
@@ -128,9 +131,9 @@ class FxConverter:
     def _provider_for(self, year: int) -> FxProvider | None:
         # Single dispatch table, disjoint year ranges.
         if year >= 2021:
-            return TradeTariffProvider(self.fx_dir)
+            return TradeTariffProvider(self.fx_dir, self.force_download)
         if 2015 <= year < 2021:
-            return HmrcXmlProvider(self.fx_dir)
+            return HmrcXmlProvider(self.fx_dir, self.force_download)
         return None
 
     # -- conversion, one by one --

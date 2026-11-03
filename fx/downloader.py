@@ -1,40 +1,29 @@
-"""Download a file over HTTPS, verified, atomically.
+"""Download a file over HTTPS with curl, verified, atomically.
 
-Standard library only, plus curl as a fallback, no pip packages.
+Curl only, no urllib route. Curl uses the system certificate
+store, the same store a browser uses, so it works on machines
+where Python's own CA bundle does not trust the site.
+Verification is not disabled.
 
-Order per URL:
-  1. urllib, with Python's default verified context.
-  2. If urllib fails on SSL verification only, curl, if present.
-     Curl uses the system certificate store, the same store
-     a browser uses, so it works on machines where Python's
-     own CA bundle is broken or empty. Curl verification is
-     not disabled either, it verifies with the system store.
+Curl is a prerequisite, not an optional fallback. If curl
+is not found, the download fails with a clear error.
 
-On any other failure, curl is not tried for that URL,
-the next URL in the list is tried instead. On failure,
-nothing is saved, so a later run retries cleanly.
+On success, a message is printed to stderr naming the URL
+and the destination, so a download is never silent. A file
+already in cache is not a download, so no message is printed
+for it. On failure, nothing is saved, so a later run retries
+cleanly, and a forced redownload never clobbers a cached file
+with a failed download.
 """
 
 from __future__ import annotations
 
 import shutil
-import ssl
 import subprocess
-import urllib.error
-import urllib.request
+import sys
 from pathlib import Path
 
 _USER_AGENT = "Mozilla/5.0 (compatible; CGT-calculator)"
-
-
-def _is_ssl_error(exc: Exception) -> bool:
-    if isinstance(exc, urllib.error.URLError):
-        reason_text = str(exc.reason)
-        return (
-            isinstance(exc.reason, ssl.SSLCertVerificationError)
-            or "CERTIFICATE_VERIFY_FAILED" in reason_text
-        )
-    return False
 
 
 def _check_file(path: Path) -> str | None:
@@ -51,25 +40,12 @@ def _check_file(path: Path) -> str | None:
     return None
 
 
-def _download_urllib(url: str, tmp_path: Path) -> None:
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": _USER_AGENT,
-            "Accept": "text/csv,application/xml,*/*",
-        },
-    )
-    with urllib.request.urlopen(
-        request, timeout=30, context=ssl.create_default_context()
-    ) as response:
-        data = response.read()
-    tmp_path.write_bytes(data)
-
-
 def _download_curl(url: str, tmp_path: Path) -> None:
     curl = shutil.which("curl")
     if curl is None:
-        raise RuntimeError("curl not found on this machine")
+        raise RuntimeError(
+            "curl not found on this machine: curl is required to download FX rates"
+        )
     result = subprocess.run(
         [
             curl,
@@ -100,47 +76,40 @@ def download_file(urls: str | list[str], dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = dest.with_suffix(dest.suffix + ".tmp")
     for url in urls:
-        # 1. urllib, the normal path.
         try:
-            _download_urllib(url, tmp_path)
-        except urllib.error.HTTPError as exc:
-            try:
-                body = exc.read().decode("utf-8", errors="ignore").strip()
-            except Exception:  # noqa: BLE001
-                body = ""
-            detail = f"HTTP Error {exc.code}: {exc.reason}"
-            if body:
-                detail += f", body: {body[:200]}"
-            errors.append(f"{url}: {detail}")
-            continue
+            _download_curl(url, tmp_path)
         except Exception as exc:  # noqa: BLE001
-            if not _is_ssl_error(exc):
-                errors.append(f"{url}: urllib failed: {exc}")
-                continue
-            # 2. SSL only: fall back to curl for this URL.
-            errors.append(f"{url}: urllib SSL failed: {exc}")
-            try:
-                _download_curl(url, tmp_path)
-            except Exception as curl_exc:  # noqa: BLE001
-                errors.append(f"{url}: curl failed: {curl_exc}")
-                continue
-        # Either path wrote tmp_path, validate it before publishing.
+            errors.append(f"{url}: {exc}")
+            continue
+        # Curl wrote tmp_path, validate it before publishing.
         bad = _check_file(tmp_path)
         if bad is not None:
             errors.append(f"{url}: {bad}")
             try:
                 tmp_path.unlink(missing_ok=True)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                # Cleanup only, never masks the download error.
+                # missing_ok=True already covers a missing file,
+                # so this only fires on a real cleanup failure.
+                print(
+                    f"Warning: could not remove temporary download file "
+                    f"{tmp_path}: {exc}",
+                    file=sys.stderr,
+                )
             continue
         tmp_path.replace(dest)
+        print(f"Downloaded {url} to {dest}", file=sys.stderr)
         return
     try:
         tmp_path.unlink(missing_ok=True)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        # Cleanup only, never masks the download error raised below.
+        print(
+            f"Warning: could not remove temporary download file {tmp_path}: {exc}",
+            file=sys.stderr,
+        )
     raise RuntimeError(
         "Download failed. "
         + "; ".join(errors)
-        + f" As a workaround, download the file manually and place it at {dest}."
+        + f". As a workaround, download the file manually and place it at {dest}."
     )

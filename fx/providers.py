@@ -41,8 +41,11 @@ class UserRateNotFoundError(LookupError):
 class FxProvider(ABC):
     """A source for one currency/month rate."""
 
-    def __init__(self, fx_dir: Path) -> None:
+    def __init__(self, fx_dir: Path, force_download: bool = False) -> None:
         self.fx_dir = fx_dir
+        # True: ignore a cached raw file and redownload it.
+        # False: download only when the raw file is missing.
+        self.force_download = force_download
 
     @abstractmethod
     def source_label(self, year: int, month: int) -> str:
@@ -86,7 +89,7 @@ class TradeTariffProvider(FxProvider):
 
     def get_rate(self, year: int, month: int, currency: Currency) -> Decimal:
         raw_path = self.raw_path(year, month)
-        if not raw_path.is_file():
+        if self.force_download or not raw_path.is_file():
             download_file(self.download_urls(year, month), raw_path)
         rates = self._parse(raw_path)
         if currency not in rates:
@@ -172,7 +175,7 @@ class HmrcXmlProvider(FxProvider):
 
     def get_rate(self, year: int, month: int, currency: Currency) -> Decimal:
         raw_path = self.raw_path(year, month)
-        if not raw_path.is_file():
+        if self.force_download or not raw_path.is_file():
             download_file(self.download_urls(year, month), raw_path)
         return self._parse(raw_path, currency)
 

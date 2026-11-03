@@ -7,7 +7,12 @@ Layout, with --data-dir defaulting to "data":
   <data-dir>/output/                        reports (later steps)
   <data-dir>/output/cache/                  internal cache, not a CLI option
   <data-dir>/fx/user-provided.json          single file, all manual FX rates,
-                                          ideally empty [], last resort only
+                                            ideally empty [], last resort only
+
+  To bypass the cached FX files and redownload them, run:
+    python main.py --force-fx-download
+  A cached file is then ignored, and the new download replaces
+  it only on success. Every download prints its URL and destination.
 """
 
 from __future__ import annotations
@@ -29,6 +34,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cgt")
     parser.add_argument("--data-dir", default="data")
     parser.add_argument("--output-dir", default=None)
+    parser.add_argument(
+        "--force-fx-download",
+        action="store_true",
+        help="Ignore cached FX files and redownload them.",
+    )
     args = parser.parse_args(argv)
 
     data_dir = Path(args.data_dir)
@@ -54,9 +64,9 @@ def main(argv: list[str] | None = None) -> int:
 
     user_path = data_dir / "fx" / "user-provided.json"
     try:
-        with FxConverter(cache_dir, user_path) as fx:
+        with FxConverter(cache_dir, user_path, args.force_fx_download) as fx:
             all_events = fx.convert_events(all_parsed)
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, TypeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
@@ -92,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
         return 2
-    except (RuntimeError, ValueError, TypeError) as exc:
+    except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
 
