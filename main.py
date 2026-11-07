@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         year_events, has_future_buys = events_for_year(
             timeline, year_disposals, tax_year
         )
-        year_holdings = holdings_at_year_end(timeline, all_disposals, tax_year.end)
+        year_holdings = holdings_at_year_end(state.matcher.pool_snapshots, tax_year.end)
         current = is_current(tax_year, production_date)
         suffix = "_CURRENT" if current else ""
         portfolio_path = write_portfolio_report_year(

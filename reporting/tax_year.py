@@ -8,6 +8,8 @@ the matcher runs the full timeline first, so a sale near
 year end is matched exactly as it should be, even if the
 matching buy falls in the next tax year. Grouping happens
 afterwards, from the finished disposals and timeline.
+Holdings are the matcher's pool snapshots, read at year
+end, not a second pass over the timeline.
 
 That is what makes bed-and-breakfast across year end work:
 a sale on 5 April matched by a buy on 7 April is a disposal
@@ -37,7 +39,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 
-from matching import Disposal, MatchType
+from matching import Disposal, MatchType, PoolSnapshot
 from models import Action, Event
 
 BED_AND_BREAKFAST_DAYS = 30
@@ -123,56 +125,20 @@ def events_for_year(
 
 
 def holdings_at_year_end(
-    timeline: list[Event],
-    disposals: list[Disposal],
+    pool_snapshots: list[PoolSnapshot],
     tax_year_end: date,
 ) -> dict[str, tuple[int, Decimal]]:
-    # Pool at year end, derived from the finished run, not
-    # by snapshotting mid-run. Per (ticker, buy date):
-    # buy cost minus the cost of the part of that buy that
-    # was consumed matching a sale, is what entered the pool
-    # on that date. Pool disposals up to year end then
-    # subtract their units and cost. A sale matched by a
-    # later buy never touches the pool, so it does not
-    # subtract here; a pool disposal does, even if it was
-    # only resolved after year end, because its sell date
-    # is in this year.
-    buy_totals: dict[tuple[str, date], list] = {}
-    for event in timeline:
-        if event.action != Action.BUY or event.date > tax_year_end:
-            continue
-        total = buy_totals.setdefault(event.symbol, {}).setdefault(
-            event.date, [0, Decimal(0)]
-        )
-        total[0] += event.quantity
-        total[1] += event.pricing.amount + event.pricing.fees
-    matched: dict[tuple[str, date], list] = {}
-    for disposal in disposals:
-        if (
-            disposal.match_type not in (MatchType.SAME_DAY, MatchType.BED_AND_BREAKFAST)
-            or disposal.buy_date is None
-        ):
-            continue
-        total = matched.setdefault(disposal.symbol, {}).setdefault(
-            disposal.buy_date, [0, Decimal(0)]
-        )
-        total[0] += disposal.units
-        total[1] += disposal.cost
-    holdings: dict[str, list] = {}
-    for symbol, by_date in buy_totals.items():
-        for buy_date, (quantity, cost) in by_date.items():
-            matched_quantity, matched_cost = matched.get(symbol, {}).get(
-                buy_date, [0, Decimal(0)]
-            )
-            pool = holdings.setdefault(symbol, [0, Decimal(0)])
-            pool[0] += quantity - matched_quantity
-            pool[1] += cost - matched_cost
-    for disposal in disposals:
-        if disposal.match_type != MatchType.POOL:
-            continue
-        if disposal.sell_date > tax_year_end:
-            continue
-        pool = holdings.setdefault(disposal.symbol, [0, Decimal(0)])
-        pool[0] -= disposal.units
-        pool[1] -= disposal.cost
-    return {symbol: (units, cost) for symbol, (units, cost) in sorted(holdings.items())}
+    # Holdings are the pool as the matcher left it: the last
+    # snapshot per ticker on or before year end. No
+    # recomputation from the timeline -- the matcher already
+    # recorded every pool change, in order, during its pool
+    # pass. A sale matched by a later buy never touches the
+    # pool, so it never appears here; a pool disposal does,
+    # on its sell date. Snapshots are chronological, so the
+    # first one after year end ends the walk.
+    holdings: dict[str, tuple[int, Decimal]] = {}
+    for snapshot in pool_snapshots:
+        if snapshot.date > tax_year_end:
+            break
+        holdings[snapshot.symbol] = (snapshot.units, snapshot.total_cost)
+    return dict(sorted(holdings.items()))
