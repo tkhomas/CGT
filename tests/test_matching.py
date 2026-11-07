@@ -7,15 +7,11 @@ as main does. Tests check disposals (match type, units,
 proceeds, cost, gain) and the pool left afterwards -- the
 real logic, not the queue or other internals.
 
-Two tests are marked expectedFailure. They encode the two
-known bugs, in the correct HMRC behaviour, and they fail
-on the current queue matcher:
+Same-day rules, in the correct HMRC behaviour:
   1. a same-day buy must match a same-day sell before an
      older bed-and-breakfast sell, and
   2. several buys on the same day are one lot at their
-     average cost, not FIFO lots.
-When the two-pass matcher lands, those two should pass,
-and the decorators come off.
+     average cost.
 """
 
 from __future__ import annotations
@@ -329,6 +325,64 @@ class SameDayAndBedAndBreakfastTests(unittest.TestCase):
         )
         self.assertEqual(disposals[0].match_type, MatchType.SAME_DAY)
 
+    def test_same_day_takes_priority_over_bed_and_breakfast(self) -> None:
+        # HMRC order is same-day first, then 30 days, then
+        # pool. A buy on 20 Apr must match the 20 Apr sell
+        # before the 10 Apr sell, which then goes to the pool.
+        disposals, _ = _run(
+            [
+                _event("ACME", date(2025, 4, 1), Action.BUY, 10, 10),
+                _event("ACME", date(2025, 4, 10), Action.SELL, 5, 20),
+                _event("ACME", date(2025, 4, 20), Action.SELL, 5, 20),
+                _event("ACME", date(2025, 4, 20), Action.BUY, 5, 15),
+            ]
+        )
+        by_sell_date = {d.sell_date: d for d in disposals}
+        self.assertEqual(by_sell_date[date(2025, 4, 20)].match_type, MatchType.SAME_DAY)
+        self.assertEqual(by_sell_date[date(2025, 4, 10)].match_type, MatchType.POOL)
+
+    def test_same_day_multiple_sells_and_buys_are_averaged(self) -> None:
+        # Averaging must hold per sell, not just in total:
+        # buys 5 at £10 and 5 at £20 on the same day are
+        # £15 a unit, so a sell at £25 gains £50 and a sell
+        # at £35 gains £100. FIFO gives £75 and £75, the
+        # same total, so only per-sell gains catch it.
+        disposals, _ = _run(
+            [
+                _event("ACME", date(2025, 4, 16), Action.BUY, 5, 10),
+                _event("ACME", date(2025, 4, 16), Action.BUY, 5, 20),
+                _event("ACME", date(2025, 4, 16), Action.SELL, 5, 25),
+                _event("ACME", date(2025, 4, 16), Action.SELL, 5, 35),
+            ]
+        )
+        by_proceeds = {d.proceeds: d for d in disposals}
+        self.assertEqual(by_proceeds[Decimal(125)].cost, Decimal(75))
+        self.assertEqual(by_proceeds[Decimal(125)].gain, Decimal(50))
+        self.assertEqual(by_proceeds[Decimal(175)].cost, Decimal(75))
+        self.assertEqual(by_proceeds[Decimal(175)].gain, Decimal(100))
+
+    def test_same_day_buys_are_averaged(self) -> None:
+        # All buys on the same day are one lot at their
+        # average cost: 5 at £10 and 5 at £20 is £15 a unit.
+        # A 5-unit same-day sell therefore costs £75, and
+        # the 5-unit remainder in the pool costs £75 too.
+        disposals, portfolio = _run(
+            [
+                _event("ACME", date(2025, 4, 16), Action.BUY, 5, 10),
+                _event("ACME", date(2025, 4, 16), Action.BUY, 5, 20),
+                _event("ACME", date(2025, 4, 16), Action.SELL, 5, 30),
+            ]
+        )
+        self.assertEqual(len(disposals), 1)
+        self.assertEqual(disposals[0].match_type, MatchType.SAME_DAY)
+        self.assertEqual(disposals[0].cost, Decimal(75))
+        self.assertEqual(disposals[0].gain, Decimal(75))
+        self.assertEqual(_pool(portfolio, "ACME"), (5, Decimal(75)))
+
+
+if __name__ == "__main__":
+    unittest.main()
+
 
 class MoreScenariosTests(unittest.TestCase):
     def test_multiple_tickers_are_independent(self) -> None:
@@ -394,66 +448,3 @@ class MoreScenariosTests(unittest.TestCase):
             for event in events:
                 dispatch(event, state)
             state.matcher.finish(state.portfolio)
-
-
-class KnownBugsTests(unittest.TestCase):
-    @unittest.expectedFailure
-    def test_same_day_takes_priority_over_bed_and_breakfast(self) -> None:
-        # HMRC order is same-day first, then 30 days, then
-        # pool. A buy on 20 Apr must match the 20 Apr sell
-        # before the 10 Apr sell, which then goes to the pool.
-        disposals, _ = _run(
-            [
-                _event("ACME", date(2025, 4, 1), Action.BUY, 10, 10),
-                _event("ACME", date(2025, 4, 10), Action.SELL, 5, 20),
-                _event("ACME", date(2025, 4, 20), Action.SELL, 5, 20),
-                _event("ACME", date(2025, 4, 20), Action.BUY, 5, 15),
-            ]
-        )
-        by_sell_date = {d.sell_date: d for d in disposals}
-        self.assertEqual(by_sell_date[date(2025, 4, 20)].match_type, MatchType.SAME_DAY)
-        self.assertEqual(by_sell_date[date(2025, 4, 10)].match_type, MatchType.POOL)
-
-    @unittest.expectedFailure
-    def test_same_day_multiple_sells_and_buys_are_averaged(self) -> None:
-        # Averaging must hold per sell, not just in total:
-        # buys 5 at £10 and 5 at £20 on the same day are
-        # £15 a unit, so a sell at £25 gains £50 and a sell
-        # at £35 gains £100. FIFO gives £75 and £75, the
-        # same total, so only per-sell gains catch it.
-        disposals, _ = _run(
-            [
-                _event("ACME", date(2025, 4, 16), Action.BUY, 5, 10),
-                _event("ACME", date(2025, 4, 16), Action.BUY, 5, 20),
-                _event("ACME", date(2025, 4, 16), Action.SELL, 5, 25),
-                _event("ACME", date(2025, 4, 16), Action.SELL, 5, 35),
-            ]
-        )
-        by_proceeds = {d.proceeds: d for d in disposals}
-        self.assertEqual(by_proceeds[Decimal(125)].cost, Decimal(75))
-        self.assertEqual(by_proceeds[Decimal(125)].gain, Decimal(50))
-        self.assertEqual(by_proceeds[Decimal(175)].cost, Decimal(75))
-        self.assertEqual(by_proceeds[Decimal(175)].gain, Decimal(100))
-
-    @unittest.expectedFailure
-    def test_same_day_buys_are_averaged(self) -> None:
-        # All buys on the same day are one lot at their
-        # average cost: 5 at £10 and 5 at £20 is £15 a unit.
-        # A 5-unit same-day sell therefore costs £75, and
-        # the 5-unit remainder in the pool costs £75 too.
-        disposals, portfolio = _run(
-            [
-                _event("ACME", date(2025, 4, 16), Action.BUY, 5, 10),
-                _event("ACME", date(2025, 4, 16), Action.BUY, 5, 20),
-                _event("ACME", date(2025, 4, 16), Action.SELL, 5, 30),
-            ]
-        )
-        self.assertEqual(len(disposals), 1)
-        self.assertEqual(disposals[0].match_type, MatchType.SAME_DAY)
-        self.assertEqual(disposals[0].cost, Decimal(75))
-        self.assertEqual(disposals[0].gain, Decimal(75))
-        self.assertEqual(_pool(portfolio, "ACME"), (5, Decimal(75)))
-
-
-if __name__ == "__main__":
-    unittest.main()
