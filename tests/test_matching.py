@@ -379,9 +379,35 @@ class SameDayAndBedAndBreakfastTests(unittest.TestCase):
         self.assertEqual(disposals[0].gain, Decimal(75))
         self.assertEqual(_pool(portfolio, "ACME"), (5, Decimal(75)))
 
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_same_day_sell_filled_first_is_not_matched_again(self) -> None:
+        # A buy big enough to match a same-day sell and two
+        # older bed-and-breakfast sells: the same-day sell
+        # is allocated out of order, so when the matcher
+        # comes back to it for a later bed-and-breakfast
+        # sell it must not match it again as a zero-unit
+        # disposal. Three disposals, no zero-unit one, and
+        # the 5-unit remainder of the buy in the pool.
+        disposals, portfolio = _run(
+            [
+                _event("ACME", date(2025, 3, 25), Action.SELL, 5, 30),
+                _event("ACME", date(2025, 4, 10), Action.SELL, 5, 30),
+                _event("ACME", date(2025, 4, 20), Action.SELL, 5, 30),
+                _event("ACME", date(2025, 4, 20), Action.BUY, 20, 20),
+            ]
+        )
+        self.assertEqual(len(disposals), 3)
+        self.assertTrue(all(d.units > 0 for d in disposals))
+        by_sell_date = {d.sell_date: d for d in disposals}
+        self.assertEqual(by_sell_date[date(2025, 4, 20)].match_type, MatchType.SAME_DAY)
+        self.assertEqual(
+            by_sell_date[date(2025, 3, 25)].match_type,
+            MatchType.BED_AND_BREAKFAST,
+        )
+        self.assertEqual(
+            by_sell_date[date(2025, 4, 10)].match_type,
+            MatchType.BED_AND_BREAKFAST,
+        )
+        self.assertEqual(_pool(portfolio, "ACME"), (5, Decimal(100)))
 
 
 class MoreScenariosTests(unittest.TestCase):
@@ -448,3 +474,7 @@ class MoreScenariosTests(unittest.TestCase):
             for event in events:
                 dispatch(event, state)
             state.matcher.finish(state.portfolio)
+
+
+if __name__ == "__main__":
+    unittest.main()

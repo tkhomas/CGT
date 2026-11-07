@@ -7,9 +7,11 @@ under a temporary cache dir, so no test touches the network.
 
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -145,7 +147,9 @@ class FxConverterTests(unittest.TestCase):
                 }
             ]
         )
-        with self._converter() as fx:
+        # The user rate prints its warning on first use;
+        # the warning text itself is covered elsewhere.
+        with redirect_stderr(io.StringIO()), self._converter() as fx:
             rate, source = fx.get_rate(Currency.USD, 2014, 6)
         self.assertEqual(rate, Decimal("1.5"))
         self.assertEqual(source, "user-provided:2014-06")
@@ -189,7 +193,7 @@ class FxConverterTests(unittest.TestCase):
                 }
             ]
         )
-        with self._converter() as fx:
+        with redirect_stderr(io.StringIO()), self._converter() as fx:
             rate, source = fx.get_rate(Currency.EUR, 2020, 12)
         self.assertEqual(rate, Decimal("1.1202"))
         self.assertEqual(source, "user-provided:2020-12")

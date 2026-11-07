@@ -302,7 +302,10 @@ class ProviderDiscoveryTests(unittest.TestCase):
         for label, config, expected in cases:
             with self.subTest(label=label):
                 provider_dir = self._provider_dir(f"p-{label}", config)
-                result = load_provider_config(provider_dir)
+                # A bad config prints a warning on stderr;
+                # the warning text is not what this test checks.
+                with redirect_stderr(io.StringIO()):
+                    result = load_provider_config(provider_dir)
                 if expected is None:
                     self.assertIsNone(result)
                 else:
@@ -318,7 +321,9 @@ class ProviderDiscoveryTests(unittest.TestCase):
         # no config, no crash.
         provider_dir = self._provider_dir("p-bad-json", None)
         (provider_dir / "config.json").write_text("{not json", encoding="utf-8")
-        self.assertIsNone(load_provider_config(provider_dir))
+        with redirect_stderr(io.StringIO()):
+            result = load_provider_config(provider_dir)
+        self.assertIsNone(result)
 
     def test_find_inputs_collects_csvs_and_skips_problems(self):
         # One provider with a CSV at the top and one in a

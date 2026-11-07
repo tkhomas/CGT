@@ -247,7 +247,9 @@ class UserProvidedRatesProviderTests(unittest.TestCase):
 
     def test_reads_rate_currency_case_insensitive(self):
         self._write_entries([self._entry(currency="usd")])
-        self.assertEqual(self.provider.get_rate(2019, 1, Currency.USD), Decimal("9.9"))
+        with redirect_stderr(io.StringIO()):
+            rate = self.provider.get_rate(2019, 1, Currency.USD)
+        self.assertEqual(rate, Decimal("9.9"))
 
     def test_warning_printed_once_per_rate(self):
         self._write_entries([self._entry()])
