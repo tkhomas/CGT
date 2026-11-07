@@ -212,7 +212,14 @@ class FxConverter:
         # Overwritten each run, never read back.
         self.fx_dir.mkdir(parents=True, exist_ok=True)
         entries = []
-        for (year, month, currency), (rate, source) in sorted(self._rates.items()):
+        # Sort by currency code, not by the Currency enum itself:
+        # enum members are not orderable, so sorted() on the
+        # (year, month, currency) key fails as soon as one month
+        # has two currencies in use.
+        for (year, month, currency), (rate, source) in sorted(
+            self._rates.items(),
+            key=lambda item: (item[0][0], item[0][1], item[0][2].value),
+        ):
             entries.append(
                 {
                     "month": f"{year}-{month:02d}",
