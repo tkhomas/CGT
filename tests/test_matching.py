@@ -110,7 +110,7 @@ class PoolTests(unittest.TestCase):
         self.assertEqual(_pool(portfolio, "ACME"), (10, Decimal(150)))
 
     def test_fees_are_in_cost_and_proceeds(self) -> None:
-        disposals, _portfolio = _run(
+        disposals, portfolio = _run(
             [
                 _event("ACME", date(2025, 1, 1), Action.BUY, 10, 10, fees=5),
                 _event("ACME", date(2025, 3, 1), Action.SELL, 10, 20, fees=5),
@@ -330,6 +330,72 @@ class SameDayAndBedAndBreakfastTests(unittest.TestCase):
         self.assertEqual(disposals[0].match_type, MatchType.SAME_DAY)
 
 
+class MoreScenariosTests(unittest.TestCase):
+    def test_multiple_tickers_are_independent(self) -> None:
+        # A wrong matcher with one global pool, or one
+        # global queue, would mix ACME and GLOB. Each
+        # ticker must have its own pool and its own gains.
+        disposals, portfolio = _run(
+            [
+                _event("ACME", date(2025, 1, 1), Action.BUY, 10, 10),
+                _event("GLOB", date(2025, 1, 2), Action.BUY, 10, 20),
+                _event("ACME", date(2025, 3, 1), Action.SELL, 5, 30),
+                _event("GLOB", date(2025, 3, 2), Action.SELL, 5, 40),
+            ]
+        )
+        by_symbol = {d.symbol: d for d in disposals}
+        self.assertEqual(by_symbol["ACME"].gain, Decimal(100))
+        self.assertEqual(by_symbol["GLOB"].gain, Decimal(100))
+        self.assertEqual(_pool(portfolio, "ACME"), (5, Decimal(50)))
+        self.assertEqual(_pool(portfolio, "GLOB"), (5, Decimal(100)))
+
+    def test_events_out_of_order_give_same_result(self) -> None:
+        # Input order is file order, not transaction order.
+        # The timeline sorts by date, so running the same
+        # events in reverse input order must give the same
+        # disposals and the same pool. If sorting were
+        # dropped, this would fail.
+        events = [
+            _event("ACME", date(2025, 1, 1), Action.BUY, 10, 10),
+            _event("ACME", date(2025, 1, 10), Action.SELL, 10, 20),
+            _event("ACME", date(2025, 1, 20), Action.BUY, 10, 15),
+        ]
+        first_disposals, first_portfolio = _run(events)
+        second_disposals, second_portfolio = _run(list(reversed(events)))
+        self.assertEqual(
+            [
+                (d.sell_date, d.buy_date, d.match_type, d.units, d.proceeds, d.cost)
+                for d in first_disposals
+            ],
+            [
+                (d.sell_date, d.buy_date, d.match_type, d.units, d.proceeds, d.cost)
+                for d in second_disposals
+            ],
+        )
+        self.assertEqual(
+            _pool(first_portfolio, "ACME"), _pool(second_portfolio, "ACME")
+        )
+
+    def test_partial_bed_and_breakfast_then_pool_insufficient(self) -> None:
+        # A sell partly matched bed-and-breakfast can still
+        # be pool-insufficient for the rest: pool 5, sell
+        # 10, buy 3 back within 30 days, leaving 7 to come
+        # from a pool holding only 5. That must scream,
+        # not silently cost the missing 2 at zero.
+        state = State()
+        events = build_global_timeline(
+            [
+                _event("ACME", date(2025, 1, 1), Action.BUY, 5, 10),
+                _event("ACME", date(2025, 1, 10), Action.SELL, 10, 20),
+                _event("ACME", date(2025, 1, 20), Action.BUY, 3, 15),
+            ]
+        )
+        with self.assertRaises(PoolInsufficientError):
+            for event in events:
+                dispatch(event, state)
+            state.matcher.finish(state.portfolio)
+
+
 class KnownBugsTests(unittest.TestCase):
     @unittest.expectedFailure
     def test_same_day_takes_priority_over_bed_and_breakfast(self) -> None:
@@ -347,6 +413,27 @@ class KnownBugsTests(unittest.TestCase):
         by_sell_date = {d.sell_date: d for d in disposals}
         self.assertEqual(by_sell_date[date(2025, 4, 20)].match_type, MatchType.SAME_DAY)
         self.assertEqual(by_sell_date[date(2025, 4, 10)].match_type, MatchType.POOL)
+
+    @unittest.expectedFailure
+    def test_same_day_multiple_sells_and_buys_are_averaged(self) -> None:
+        # Averaging must hold per sell, not just in total:
+        # buys 5 at £10 and 5 at £20 on the same day are
+        # £15 a unit, so a sell at £25 gains £50 and a sell
+        # at £35 gains £100. FIFO gives £75 and £75, the
+        # same total, so only per-sell gains catch it.
+        disposals, _ = _run(
+            [
+                _event("ACME", date(2025, 4, 16), Action.BUY, 5, 10),
+                _event("ACME", date(2025, 4, 16), Action.BUY, 5, 20),
+                _event("ACME", date(2025, 4, 16), Action.SELL, 5, 25),
+                _event("ACME", date(2025, 4, 16), Action.SELL, 5, 35),
+            ]
+        )
+        by_proceeds = {d.proceeds: d for d in disposals}
+        self.assertEqual(by_proceeds[Decimal(125)].cost, Decimal(75))
+        self.assertEqual(by_proceeds[Decimal(125)].gain, Decimal(50))
+        self.assertEqual(by_proceeds[Decimal(175)].cost, Decimal(75))
+        self.assertEqual(by_proceeds[Decimal(175)].gain, Decimal(100))
 
     @unittest.expectedFailure
     def test_same_day_buys_are_averaged(self) -> None:
