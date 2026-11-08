@@ -145,9 +145,14 @@ def main(argv: list[str] | None = None) -> int:
     tax_years = tax_years_for(timeline, all_disposals)
     if not tax_years:
         print("No events, no reports written.")
+        _print_skipped_summary(total_skipped)
         return 0
 
     production_date = date.today()
+    # A blank line between the processing chatter above --
+    # parse warnings, FX downloads -- and the results below,
+    # so the report list reads as its own section.
+    print()
     for tax_year in tax_years:
         year_disposals = disposals_for_year(all_disposals, tax_year)
         year_events, has_future_buys = events_for_year(
@@ -185,7 +190,31 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Portfolio report written to {portfolio_path}")
         print(f"Disposals report written to {disposals_path}")
         print(f"Dividends and interest report written to {income_path}")
+    _print_skipped_summary(total_skipped)
     return 0
+
+
+def _print_skipped_summary(total_skipped: int) -> None:
+    # The detailed warnings already printed while parsing,
+    # in the middle of the run's other output, where they
+    # are easy to miss -- a skipped row is in no report,
+    # so missing one means missing data. Repeat the count
+    # at the end, on its own and separated by blank lines,
+    # so it is the last thing seen.
+    if total_skipped <= 0:
+        return
+    # Flush stdout first: when output is piped, stdout is
+    # block-buffered and stderr is not, so without this the
+    # summary would jump ahead of the report lines it is
+    # meant to follow.
+    sys.stdout.flush()
+    row = "row" if total_skipped == 1 else "rows"
+    print(
+        f"\nWarning: {total_skipped} input {row} skipped "
+        "during parsing and in no report. See the warnings "
+        "above for the rows and reasons.\n",
+        file=sys.stderr,
+    )
 
 
 def clean_reports(output_dir: Path) -> int:

@@ -131,6 +131,14 @@ class EndToEndTests(unittest.TestCase):
 
     def test_run_exits_zero_and_writes_twenty_one_reports(self) -> None:
         self.assertEqual(self.result.returncode, 0, self.result.stderr)
+        # The one skipped fixture row is the Transfer row:
+        # it is warned about while parsing, and the count
+        # is repeated at the end, separated, so it is not
+        # missed among the report lines.
+        self.assertIn(
+            "Warning: 1 input row skipped during parsing and in no report.",
+            self.result.stderr,
+        )
         expected = [
             f"{kind}-{label}.html"
             for kind in ("portfolio", "disposals", "dividends-interest")
