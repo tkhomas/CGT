@@ -124,6 +124,56 @@ def events_for_year(
     return events, has_future_buys
 
 
+@dataclass(frozen=True)
+class IncomeTotals:
+    # Sums of income in one tax year, in GBP. Tax totals
+    # are positive: the amount of foreign tax already
+    # paid, so the net received is gross minus tax.
+    dividends: Decimal
+    dividend_tax: Decimal
+    interest: Decimal
+    interest_tax: Decimal
+
+
+def income_for_year(income: list[Event], tax_year: TaxYear) -> IncomeTotals:
+    # A tax year is the year of the payment date, including
+    # for prior-year dividends: they are taxed when
+    # received, not when they relate to.
+    #
+    # A withholding row is tax on a dividend if a dividend
+    # row exists with the same symbol on the same date, and
+    # tax on interest otherwise: tax and its income are
+    # always the same day, and no dividend row has an empty
+    # symbol. No pairing of individual rows is needed --
+    # only the category matters, and two dividends for the
+    # same stock on the same day land in the same bucket
+    # either way. A tax row whose dividend row is missing
+    # from the data lands in interest tax; the raw events
+    # are still shown, so that is visible, not silent.
+    year_income = [event for event in income if tax_year_of(event.date) == tax_year]
+    dividend_days = {
+        (event.symbol, event.date)
+        for event in year_income
+        if event.action is Action.DIVIDEND
+    }
+    dividends = Decimal(0)
+    dividend_tax = Decimal(0)
+    interest = Decimal(0)
+    interest_tax = Decimal(0)
+    for event in year_income:
+        amount = event.pricing.amount
+        if event.action is Action.DIVIDEND:
+            dividends += amount
+        elif event.action is Action.INTEREST:
+            interest += amount
+        elif event.action is Action.WITHHOLDING_TAX:
+            if (event.symbol, event.date) in dividend_days:
+                dividend_tax -= amount
+            else:
+                interest_tax -= amount
+    return IncomeTotals(dividends, dividend_tax, interest, interest_tax)
+
+
 def holdings_at_year_end(
     pool_snapshots: list[PoolSnapshot],
     tax_year_end: date,

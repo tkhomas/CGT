@@ -57,6 +57,35 @@ def _event(
     )
 
 
+def _income_event(
+    symbol: str,
+    when: date,
+    action: Action,
+    amount: int | Decimal,
+) -> Event:
+    # Income rows carry no quantity and no price: the
+    # amount is the value itself, positive for a dividend
+    # or interest, negative for tax already paid.
+    return Event(
+        date=when,
+        action=action,
+        symbol=symbol,
+        description="",
+        quantity=0,
+        pricing=Pricing(
+            original_currency=Currency.GBP,
+            original_price=Decimal(0),
+            original_amount=Decimal(amount),
+            original_fees=Decimal(0),
+            original_units_per_gbp=Decimal(1),
+            fx_source="GBP",
+        ),
+        provider="Test Broker",
+        source_file="test.csv",
+        row=1,
+    )
+
+
 def _run(events: list[Event]) -> tuple[list[Disposal], Portfolio]:
     """Run a list of events through the timeline and dispatch.
 
@@ -474,6 +503,41 @@ class MoreScenariosTests(unittest.TestCase):
             for event in events:
                 dispatch(event, state)
             state.matcher.finish(state.portfolio)
+
+
+class IncomeTests(unittest.TestCase):
+    def test_income_events_are_collected_and_change_nothing_else(self):
+        # One processor collects all income actions. A
+        # dividend, its tax and an interest payment in the
+        # same file as a buy leave no disposals and the
+        # pool exactly as the buy left it; the income
+        # events themselves are kept, in timeline order,
+        # for reporting to sum per tax year.
+        state = State()
+        events = build_global_timeline(
+            [
+                _event("ACME", date(2026, 9, 1), Action.BUY, 10, 50),
+                _income_event("ACME", date(2026, 9, 11), Action.DIVIDEND, 40),
+                _income_event("ACME", date(2026, 9, 11), Action.WITHHOLDING_TAX, -6),
+                _income_event("", date(2026, 9, 30), Action.INTEREST, "2.50"),
+                _income_event("", date(2026, 9, 30), Action.WITHHOLDING_TAX, "-0.50"),
+            ]
+        )
+        for event in events:
+            dispatch(event, state)
+        state.matcher.finish(state.portfolio)
+
+        self.assertEqual(state.matcher.gains.disposals, [])
+        self.assertEqual(_pool(state.portfolio, "ACME"), (10, Decimal(500)))
+        self.assertEqual(
+            [(event.action, event.pricing.original_amount) for event in state.income],
+            [
+                (Action.DIVIDEND, Decimal(40)),
+                (Action.WITHHOLDING_TAX, Decimal(-6)),
+                (Action.INTEREST, Decimal("2.50")),
+                (Action.WITHHOLDING_TAX, Decimal("-0.50")),
+            ],
+        )
 
 
 if __name__ == "__main__":

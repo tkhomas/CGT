@@ -112,6 +112,29 @@ class ParseHelpersTests(unittest.TestCase):
             self.assertIsNone(parse_action(None, "test.csv", 2))
             self.assertIsNone(parse_action("", "test.csv", 2))
 
+    def test_parse_action_maps_income_names_to_canonical_actions(self):
+        # Schwab names several things that are one thing
+        # for UK tax: both dividend names map to Dividend,
+        # both interest names map to Interest, and all
+        # three tax names map to Withholding Tax, the only
+        # tax action -- a tax row does not say what it is
+        # tax on, and reporting decides that from the
+        # dividend row with the same symbol on the same
+        # date.
+        cases = [
+            ("Qualified Dividend", Action.DIVIDEND),
+            ("qualified dividend", Action.DIVIDEND),
+            ("Pr Yr Non-Qual Div", Action.DIVIDEND),
+            ("NRA Tax Adj", Action.WITHHOLDING_TAX),
+            ("Foreign Tax Paid", Action.WITHHOLDING_TAX),
+            ("Pr Yr NRA Tax", Action.WITHHOLDING_TAX),
+            ("Credit Interest", Action.INTEREST),
+            ("Bond Interest", Action.INTEREST),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(parse_action(text, "test.csv", 2), expected)
+
     def test_parse_action_recognises_ignored_actions(self):
         # Ignored actions are recognised, not unrecognised:
         # they must not warn and must not be skipped.
@@ -347,6 +370,121 @@ class ParseCsvTests(unittest.TestCase):
         buy = events[0]
         self.assertEqual(buy.action, Action.BUY)
         self.assertEqual(buy.date, date(2026, 9, 5))
+        self.assertEqual(buy.symbol, "ACME")
+
+    def test_parse_csv_reads_income_rows(self):
+        # Rows shaped like a Schwab export, with made-up
+        # tickers, dates and values throughout. Income rows
+        # carry no quantity and no price: the Amount is the
+        # value, positive for a dividend or interest,
+        # negative for tax already paid. A prior-year
+        # dividend is still just a dividend here; the tax
+        # year it lands in is decided by its payment date,
+        # later. A normal Buy in the same file still
+        # parses as usual.
+        path = _write_csv(
+            self.dir / "transactions.csv",
+            HEADER,
+            [
+                [
+                    "09/11/2026",
+                    "Qualified Dividend",
+                    "ACME",
+                    "ACME HOLDINGS INC",
+                    "",
+                    "",
+                    "$40.00",
+                    "",
+                ],
+                [
+                    "09/11/2026",
+                    "Foreign Tax Paid",
+                    "ACME",
+                    "ACME HOLDINGS INC",
+                    "",
+                    "",
+                    "-$6.00",
+                    "",
+                ],
+                [
+                    "09/30/2026",
+                    "Credit Interest",
+                    "",
+                    "BROKER INT 09/01-09/30",
+                    "",
+                    "",
+                    "$2.50",
+                    "",
+                ],
+                [
+                    "06/20/2026",
+                    "Bond Interest",
+                    "99999FAKE1",
+                    "FAKE TREASURY NOTE 4% DUE 12/15/27",
+                    "",
+                    "",
+                    "$1.25",
+                    "",
+                ],
+                [
+                    "01/20/2026",
+                    "Pr Yr Non-Qual Div",
+                    "GLOB",
+                    "GLOB HOLDINGS INC",
+                    "",
+                    "",
+                    "$18.00",
+                    "",
+                ],
+                [
+                    "01/20/2026",
+                    "Pr Yr NRA Tax",
+                    "GLOB",
+                    "GLOB HOLDINGS INC",
+                    "",
+                    "",
+                    "-$2.70",
+                    "",
+                ],
+                [
+                    "09/05/2026",
+                    "Buy",
+                    "ACME",
+                    "Buy ACME",
+                    "10",
+                    "$50.00",
+                    "$500.00",
+                    "$0.00",
+                ],
+            ],
+        )
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 7)
+
+        dividend, tax, credit, bond, prior, prior_tax, buy = events
+        self.assertEqual(dividend.action, Action.DIVIDEND)
+        self.assertEqual(dividend.date, date(2026, 9, 11))
+        self.assertEqual(dividend.symbol, "ACME")
+        self.assertEqual(dividend.quantity, 0)
+        self.assertEqual(dividend.original_amount, Decimal("40.00"))
+        self.assertEqual(tax.action, Action.WITHHOLDING_TAX)
+        self.assertEqual(tax.original_amount, Decimal("-6.00"))
+        self.assertEqual(credit.action, Action.INTEREST)
+        self.assertEqual(credit.symbol, "")
+        self.assertEqual(credit.original_amount, Decimal("2.50"))
+        self.assertEqual(bond.action, Action.INTEREST)
+        self.assertEqual(bond.symbol, "99999FAKE1")
+        self.assertEqual(bond.original_amount, Decimal("1.25"))
+        self.assertEqual(prior.action, Action.DIVIDEND)
+        self.assertEqual(prior.date, date(2026, 1, 20))
+        self.assertEqual(prior.original_amount, Decimal("18.00"))
+        self.assertEqual(prior_tax.action, Action.WITHHOLDING_TAX)
+        self.assertEqual(prior_tax.original_amount, Decimal("-2.70"))
+        self.assertEqual(buy.action, Action.BUY)
         self.assertEqual(buy.symbol, "ACME")
 
 

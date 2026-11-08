@@ -402,3 +402,6 @@ class Matcher:
 class State:
     portfolio: Portfolio = field(default_factory=Portfolio)
     matcher: Matcher = field(default_factory=Matcher)
+    # Income events, collected in timeline order. The sums
+    # per tax year are made at reporting, not here.
+    income: list[Event] = field(default_factory=list)

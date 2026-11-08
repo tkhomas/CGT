@@ -12,6 +12,14 @@ class Action(Enum):
     SELL = "sell"
     STOCK_PLAN_ACTIVITY = "stock plan activity"
     WIRE_SENT = "wire sent"
+    DIVIDEND = "dividend"
+    INTEREST = "interest"
+    # Tax already withheld from income: the only tax
+    # action. A tax row does not say whether it is tax on
+    # a dividend or on interest, and it is never rewritten:
+    # reporting decides that from the dividend row with
+    # the same symbol on the same date.
+    WITHHOLDING_TAX = "withholding tax"
 
 
 # Actions that are recognised but are not CGT events, so
@@ -25,6 +33,22 @@ IGNORED_ACTIONS: frozenset[Action] = frozenset(
 )
 
 
+# Income actions: dividends, interest, and tax already
+# withheld from either. One processor collects them all;
+# the sums per tax year are made at reporting, where a
+# withholding row is counted as dividend tax if a dividend
+# row exists with the same symbol on the same date, and
+# as interest tax otherwise.
+# Standing assumption: all of this tax is foreign tax
+# withheld at source -- in practice US tax taken by
+# Schwab, NRA withholding on a non-US person -- and none
+# of it is HMRC tax. Revisit if another broker ever shows
+# UK tax withheld.
+INCOME_ACTIONS: frozenset[Action] = frozenset(
+    {Action.DIVIDEND, Action.INTEREST, Action.WITHHOLDING_TAX}
+)
+
+
 # Global ordering within a single date, as a simple list.
 # Earlier in the list means earlier in processing that day.
 # Ignored actions are dropped at parsing, so they are not
@@ -33,6 +57,9 @@ IGNORED_ACTIONS: frozenset[Action] = frozenset(
 ACTION_ORDER: list[Action] = [
     Action.SELL,
     Action.BUY,
+    Action.DIVIDEND,
+    Action.INTEREST,
+    Action.WITHHOLDING_TAX,
 ]
 
 

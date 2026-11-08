@@ -11,7 +11,7 @@ import sys
 from collections.abc import Callable
 
 from matching import State
-from models import Action, Event
+from models import INCOME_ACTIONS, Action, Event
 
 ProcessorFunc = Callable[[Event, State], None]
 
@@ -30,6 +30,16 @@ def register(*actions: Action) -> Callable[[ProcessorFunc], ProcessorFunc]:
 @register(Action.BUY, Action.SELL)
 def process_buy_sell(event: Event, state: State) -> None:
     state.matcher.process(event, state.portfolio)
+
+
+@register(*INCOME_ACTIONS)
+def process_income(event: Event, state: State) -> None:
+    """One processor for all income actions: dividends,
+    interest, and tax already withheld from either. It
+    only collects the events, in timeline order; the sums
+    per tax year are made at reporting. Income never
+    touches a pool or a gain."""
+    state.income.append(event)
 
 
 def dispatch(event: Event, state: State) -> None:
