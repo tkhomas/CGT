@@ -63,6 +63,19 @@ class ParseHelpersTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(parse_date(text, fmt), expected)
 
+    def test_parse_date_takes_first_date_when_two_dates_are_given(self):
+        # Schwab can show "08/18/2026 as of 08/17/2026":
+        # the first date is the transaction date, the
+        # second is the date it is reported as of.
+        cases = [
+            ("08/18/2026 as of 08/17/2026", "%m/%d/%Y", date(2026, 8, 18)),
+            ("18/08/2026 as of 17/08/2026", "%d/%m/%Y", date(2026, 8, 18)),
+            ("08/18/2026", "%m/%d/%Y", date(2026, 8, 18)),
+        ]
+        for text, fmt, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(parse_date(text, fmt), expected)
+
     def test_parse_money_strips_symbols_commas_and_space(self):
         # Money cleanup only: it never decides the currency,
         # that comes from the provider config.
