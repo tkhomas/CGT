@@ -13,3 +13,6 @@
 "20/06/2026","Sell","ACME","ACME CORP CLASS A","3","£60.00","£1.00","£180.00"
 "10/09/2026","Dividend","GLOB","GLOBEX INDUSTRIES","10","£0.80","£0.00","£8.00"
 "01/10/2026","Sell","GLOB","GLOBEX INDUSTRIES","4","£33.00","£1.00","£132.00"
+"15/09/2026","Qualified Dividend","WIDG","WIDGET CO","","","","£12.00"
+"15/09/2026","NRA Tax Adj","WIDG","WIDGET CO","","","","-£1.80"
+"01/10/2026","Credit Interest","","BROKER INT 09/01-09/30","","","","£3.00"

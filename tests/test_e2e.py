@@ -129,11 +129,11 @@ class EndToEndTests(unittest.TestCase):
     def _read(self, name: str) -> str:
         return (self.output_dir / name).read_text(encoding="utf-8")
 
-    def test_run_exits_zero_and_writes_fourteen_reports(self) -> None:
+    def test_run_exits_zero_and_writes_twenty_one_reports(self) -> None:
         self.assertEqual(self.result.returncode, 0, self.result.stderr)
         expected = [
             f"{kind}-{label}.html"
-            for kind in ("portfolio", "disposals")
+            for kind in ("portfolio", "disposals", "dividends-interest")
             for label in (
                 "2018-19",
                 "2019-20",
@@ -153,8 +153,9 @@ class EndToEndTests(unittest.TestCase):
 
     def test_per_year_total_gains(self) -> None:
         # Verified by hand from the fixture data on 2026-11-03.
-        # Dividends must not change these: they are disposals
-        # only, and the fixture Dividend rows are skipped.
+        # Dividends must not change these: they are income,
+        # not disposals, and income never touches a pool or
+        # a gain.
         for label, total in [
             ("2019-20", "£100.00"),
             ("2020-21", "£0.00"),
@@ -165,6 +166,50 @@ class EndToEndTests(unittest.TestCase):
             with self.subTest(label=label):
                 html = self._read(f"disposals-{label}.html")
                 self.assertIn(f"<th>Total gain</th><td class='num'>{total}</td>", html)
+
+    def test_per_year_dividends_and_interest(self) -> None:
+        # Verified by hand from the fixture data. Totals are
+        # sums of unrounded GBP amounts, shown to the penny:
+        # 2024/25 dividends are $10.50 + $20.00 at the Mar
+        # 2025 rate of 1.2585, tax $3.00 at the same rate.
+        # 2025/26 is a prior-year dividend of $18.00 and
+        # $2.70 tax at the Jan 2026 rate of 1.3329, plus
+        # $5.00 interest and $0.75 tax at the Apr 2025 rate
+        # of 1.2978. 2026/27 is £8.00 + £12.00 dividends,
+        # £1.80 tax, and £3.00 interest, all in GBP.
+        cases = [
+            ("2024-25", "£24.24", "£2.38", "£21.85", "£0.00", "£0.00", "£0.00"),
+            ("2025-26", "£13.50", "£2.03", "£11.48", "£3.85", "£0.58", "£3.27"),
+            (
+                "2026-27_CURRENT",
+                "£20.00",
+                "£1.80",
+                "£18.20",
+                "£3.00",
+                "£0.00",
+                "£3.00",
+            ),
+        ]
+        for label, div, div_tax, net_div, intr, intr_tax, net_intr in cases:
+            with self.subTest(label=label):
+                html = self._read(f"dividends-interest-{label}.html")
+                for heading, total in [
+                    ("Dividends received", div),
+                    ("Foreign tax withheld on dividends", div_tax),
+                    ("Net dividends received", net_div),
+                    ("Interest received", intr),
+                    ("Foreign tax withheld on interest", intr_tax),
+                    ("Net interest received", net_intr),
+                ]:
+                    self.assertIn(
+                        f"<th>{heading}</th><td class='num'>{total}</td>", html
+                    )
+
+    def test_dividends_report_has_no_internal_file_names(self) -> None:
+        html = self._read("dividends-interest-2025-26.html")
+        self.assertIn("No local file names are included.", html)
+        self.assertNotIn("test_data.csv", html)
+        self.assertNotIn("transactions.csv", html)
 
     def test_current_year_is_marked_current(self) -> None:
         self.assertTrue((self.output_dir / "disposals-2026-27_CURRENT.html").is_file())
@@ -195,6 +240,8 @@ class EndToEndTests(unittest.TestCase):
     def test_clean_output_removes_old_reports_but_not_cache(self) -> None:
         stale = self.output_dir / "portfolio-1999-00.html"
         stale.write_text("stale", encoding="utf-8")
+        stale_income = self.output_dir / "dividends-interest-1999-00.html"
+        stale_income.write_text("stale", encoding="utf-8")
         fx_file = (
             self.output_dir
             / "cache"
@@ -212,4 +259,5 @@ class EndToEndTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(stale.exists())
+        self.assertFalse(stale_income.exists())
         self.assertTrue(fx_file.is_file())

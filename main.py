@@ -7,6 +7,9 @@ Layout, with --data-dir defaulting to "data":
   <data-dir>/output/                        reports, one pair per tax year
   <data-dir>/output/portfolio-<year>.html   portfolio report for a tax year
   <data-dir>/output/disposals-<year>.html   disposals report for a tax year
+  <data-dir>/output/dividends-interest-<year>.html
+                                        dividends and interest report
+                                        for a tax year
   A tax year that is not final gets _CURRENT before .html.
   <data-dir>/output/cache/                  internal cache, not a CLI option
   <data-dir>/fx/user-provided.json          single file, all manual FX rates,
@@ -32,13 +35,16 @@ from processors import dispatch
 from providers import find_inputs
 from reporting.html import (
     write_disposals_report_year,
+    write_dividends_interest_report_year,
     write_portfolio_report_year,
 )
 from reporting.tax_year import (
     disposals_for_year,
     events_for_year,
     holdings_at_year_end,
+    income_for_year,
     is_current,
+    tax_year_of,
     tax_years_for,
 )
 from timeline import build_global_timeline
@@ -58,7 +64,8 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Delete existing report files in the output dir before "
         "writing new ones. Only report files are deleted: "
-        "portfolio-*.html, disposals-*.html, and the old report.html. "
+        "portfolio-*.html, disposals-*.html, "
+        "dividends-interest-*.html, and the old report.html. "
         "Cache, inputs, and anything else are left alone. "
         "Cleaning happens only after a successful run, so a "
         "failed run never deletes the previous reports.",
@@ -165,8 +172,19 @@ def main(argv: list[str] | None = None) -> int:
             has_future_buys,
             output_dir / f"disposals-{tax_year.file_label}{suffix}.html",
         )
+        year_income = [
+            event for event in state.income if tax_year_of(event.date) == tax_year
+        ]
+        income_path = write_dividends_interest_report_year(
+            income_for_year(state.income, tax_year),
+            year_income,
+            tax_year,
+            current,
+            output_dir / f"dividends-interest-{tax_year.file_label}{suffix}.html",
+        )
         print(f"Portfolio report written to {portfolio_path}")
         print(f"Disposals report written to {disposals_path}")
+        print(f"Dividends and interest report written to {income_path}")
     return 0
 
 
@@ -175,7 +193,12 @@ def clean_reports(output_dir: Path) -> int:
     # the ones this program writes, plus the old single
     # report.html, which would otherwise go stale.
     cleaned = 0
-    for pattern in ("portfolio-*.html", "disposals-*.html", "report.html"):
+    for pattern in (
+        "portfolio-*.html",
+        "disposals-*.html",
+        "dividends-interest-*.html",
+        "report.html",
+    ):
         for path in output_dir.glob(pattern):
             if path.is_file():
                 path.unlink()

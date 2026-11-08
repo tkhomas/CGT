@@ -1,6 +1,6 @@
 """HTML reports, self-contained: inline CSS, no external assets, no JS.
 
-Two files per UK tax year, both with all events, no filtering:
+Three files per UK tax year:
 
 - portfolio-<year>.html: holdings at the end of that tax
   year (Section 104 pools, units and cost, so units per
@@ -11,6 +11,10 @@ Two files per UK tax year, both with all events, no filtering:
   chronological order. No internal file names here: they
   mean nothing to HMRC. FX rates instead link to the
   actual monthly source file they came from.
+- dividends-interest-<year>.html: dividends and interest
+  received in that tax year, with the foreign tax already
+  withheld on each, plus the income events themselves.
+  No internal file names here either.
 
 A tax year that is not final gets _CURRENT in its file
 name and a banner in the report: do not submit it yet.
@@ -31,7 +35,7 @@ from pathlib import Path
 from fx.providers import HmrcXmlProvider, TradeTariffProvider
 from matching import Disposal
 from models import Event
-from reporting.tax_year import TaxYear
+from reporting.tax_year import IncomeTotals, TaxYear
 
 
 def _gbp(value: Decimal) -> str:
@@ -198,15 +202,24 @@ def _events_table(timeline: list[Event], internal_source: bool) -> str:
 
 
 def _page(
-    title: str, heading: str, note: str, body: str, is_current: bool = False
+    title: str,
+    heading: str,
+    note: str,
+    body: str,
+    is_current: bool = False,
+    current_note: str | None = None,
 ) -> str:
     banner = ""
     if is_current:
+        if current_note is None:
+            current_note = (
+                "Figures can still change: more events can occur "
+                "in this year, and a sale in its last 30 days can "
+                "still be matched by a later buy."
+            )
         banner = (
             "<p class='note'><strong>CURRENT — unfinished tax year, "
-            "do not submit yet.</strong> Figures can still change: "
-            "more events can occur in this year, and a sale in its "
-            "last 30 days can still be matched by a later buy.</p>\n"
+            f"do not submit yet.</strong> {current_note}</p>\n"
         )
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -261,6 +274,105 @@ figure is shown in both currencies.</p>
 <a href="https://www.gov.uk/hmrc-internal-manuals/capital-gains-manual">Capital Gains Manual</a>,
 <a href="https://www.trade-tariff.service.gov.uk/exchange_rates">HMRC exchange rates</a>.</p>
 """
+
+
+def _income_rows(income: list[Event]) -> str:
+    if not income:
+        return "<tr><td colspan='6'>No dividends or interest.</td></tr>"
+    rows = []
+    for event in income:
+        pricing = event.pricing
+        rows.append(
+            f"<tr><td>{event.date.isoformat()}</td>"
+            f"<td>{_esc(event.action.value)}</td>"
+            f"<td>{_esc(event.symbol)}</td>"
+            f"<td class='num'>{_gbp(pricing.amount)}</td>"
+            f"<td class='num'>{_plain(pricing.original_units_per_gbp)} "
+            f"{_esc(pricing.original_currency.value)} per £1</td>"
+            f"<td>{_fx_cell(pricing.fx_source)}</td></tr>"
+        )
+    return "\n".join(rows)
+
+
+def _income_methodology_html() -> str:
+    # Income only: when it is taxed, how it is converted,
+    # and what the withheld tax is. The matching rules
+    # live in the disposals report's methodology, not here.
+    return """<h2>Methodology</h2>
+<p>Dividends and interest are taxed in the tax year they
+are received, on the payment date -- including dividends
+for a prior year, which are taxed when received, not when
+they relate to.</p>
+<p>Currency: all amounts are converted to GBP using the
+HMRC monthly exchange rate for the month of the payment,
+as published in original currency units per £1. GBP amount
+= original amount / rate. FX rates are linked to their
+monthly source files in the table above.</p>
+<p>Tax already withheld is foreign tax withheld at source --
+in practice US tax taken by the broker -- and none of it is
+HMRC tax. It is shown separately from the gross amounts so
+it can be claimed as a foreign tax credit. A withholding row
+counts as tax on a dividend if a dividend row exists with
+the same symbol on the same date, and as tax on interest
+otherwise.</p>
+<p>Sources:
+<a href="https://www.gov.uk/government/publications/shares-and-capital-gains-tax-hs284-self-assessment-helpsheet/hs284-shares-and-capital-gains-tax-2021#how-you-work-out-the-gain-under-the-bed-and-breakfasting-rule">HS284 — Shares and Capital Gains Tax</a>,
+<a href="https://www.gov.uk/hmrc-internal-manuals/capital-gains-manual">Capital Gains Manual</a>,
+<a href="https://www.trade-tariff.service.gov.uk/exchange_rates">HMRC exchange rates</a>.</p>
+"""
+
+
+def build_dividends_interest_report_year(
+    totals: IncomeTotals,
+    income: list[Event],
+    tax_year: TaxYear,
+    is_current: bool,
+) -> str:
+    body = f"""<h2>Summary for {tax_year.label}</h2>
+<table>
+<tr><th>Dividends received</th><td class='num'>{_gbp(totals.dividends)}</td></tr>
+<tr><th>Foreign tax withheld on dividends</th><td class='num'>{
+        _gbp(totals.dividend_tax)
+    }</td></tr>
+<tr><th>Net dividends received</th><td class='num'>{
+        _gbp(totals.dividends - totals.dividend_tax)
+    }</td></tr>
+<tr><th>Interest received</th><td class='num'>{_gbp(totals.interest)}</td></tr>
+<tr><th>Foreign tax withheld on interest</th><td class='num'>{
+        _gbp(totals.interest_tax)
+    }</td></tr>
+<tr><th>Net interest received</th><td class='num'>{
+        _gbp(totals.interest - totals.interest_tax)
+    }</td></tr>
+</table>
+
+<h2>Income in {tax_year.label}</h2>
+<table>
+<tr><th>Date</th><th>Action</th><th>Symbol</th><th>GBP amount</th>
+<th>FX rate</th><th>FX source</th></tr>
+{_income_rows(income)}
+</table>
+
+{_income_methodology_html()}
+"""
+    return _page(
+        f"Dividends and interest report {tax_year.label}",
+        f"Dividends and interest report {tax_year.label}",
+        f"Tax year {tax_year.label}: 6 April {tax_year.start_year} to "
+        "5 April "
+        f"{tax_year.end_year}. All amounts in GBP, shown to the penny; "
+        "calculations use unrounded Decimal values. Only income "
+        "received in this tax year is listed above, with the "
+        "foreign tax already withheld on it, so the gross amounts "
+        "and the tax paid are both here for the return. "
+        "No local file names are included.",
+        body,
+        is_current=is_current,
+        current_note=(
+            "Figures can still change: more dividends or interest "
+            "can still be received in this year."
+        ),
+    )
 
 
 def build_portfolio_report_year(
@@ -388,4 +500,17 @@ def write_disposals_report_year(
         build_disposals_report_year(
             disposals, events, tax_year, is_current, has_future_buys
         ),
+    )
+
+
+def write_dividends_interest_report_year(
+    totals: IncomeTotals,
+    income: list[Event],
+    tax_year: TaxYear,
+    is_current: bool,
+    path: Path,
+) -> Path:
+    return _write(
+        path,
+        build_dividends_interest_report_year(totals, income, tax_year, is_current),
     )

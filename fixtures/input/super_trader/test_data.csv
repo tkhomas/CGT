@@ -28,3 +28,9 @@
 "04/05/2026","Sell","LATE","LATE CORP","5","$30.00","$0.00","$150.00"
 "05/06/2026","Buy","LATE","LATE CORP","5","$25.00","$0.00","$125.00"
 
+"03/20/2025","Qualified Dividend","ACME","ACME CORP CLASS A","","","","$20.00"
+"03/20/2025","NRA Tax Adj","ACME","ACME CORP CLASS A","","","","-$3.00"
+"04/10/2025","Credit Interest","","BROKER INT 03/11-04/09","","","","$5.00"
+"04/10/2025","NRA Tax Adj","","BROKER INT 03/11-04/09","","","","-$0.75"
+"01/16/2026","Pr Yr Non-Qual Div","GLOB","GLOBEX INDUSTRIES","","","","$18.00"
+"01/16/2026","Pr Yr NRA Tax","GLOB","GLOBEX INDUSTRIES","","","","-$2.70"
