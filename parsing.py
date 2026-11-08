@@ -8,7 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from models import Action, ParsedEvent, ProviderConfig
+from models import IGNORED_ACTIONS, Action, ParsedEvent, ProviderConfig
 
 
 def parse_date(text: str, date_format: str) -> date:
@@ -67,6 +67,16 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], 
             action = parse_action(row.get("Action"), path.name, reader.line_num)
             if action is None:
                 skipped += 1
+                continue
+
+            # Ignored actions are recognised, not
+            # unrecognised, but they are not CGT events:
+            # a wire sent is cash out, a stock plan
+            # activity is drawn from a different report.
+            # Drop them here, silently, so they never
+            # reach the FX converter, the timeline, or
+            # the reports.
+            if action in IGNORED_ACTIONS:
                 continue
 
             quantity_decimal = Decimal((row["Quantity"] or "0").strip())

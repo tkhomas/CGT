@@ -10,13 +10,26 @@ from pathlib import Path
 class Action(Enum):
     BUY = "buy"
     SELL = "sell"
+    STOCK_PLAN_ACTIVITY = "stock plan activity"
+    WIRE_SENT = "wire sent"
+
+
+# Actions that are recognised but are not CGT events, so
+# they are dropped at parsing and never reach the timeline,
+# the FX converter, or a processor. Stock plan activity is
+# drawn from a different report later; a wire sent is cash
+# out. They are listed here only so they are recognised
+# rather than warned about as unrecognised.
+IGNORED_ACTIONS: frozenset[Action] = frozenset(
+    {Action.STOCK_PLAN_ACTIVITY, Action.WIRE_SENT}
+)
 
 
 # Global ordering within a single date, as a simple list.
 # Earlier in the list means earlier in processing that day.
-# Dividend before Interest here is arbitrary, their relative
-# order does not matter. A new action is added to this list
-# in the same chunk as its processor, never before.
+# Ignored actions are dropped at parsing, so they are not
+# in this list. A new action is added to this list in the
+# same chunk as its processor, never before.
 ACTION_ORDER: list[Action] = [
     Action.SELL,
     Action.BUY,

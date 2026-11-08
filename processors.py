@@ -27,12 +27,6 @@ def register(*actions: Action) -> Callable[[ProcessorFunc], ProcessorFunc]:
     return decorator
 
 
-def do_nothing(event: Event, state: State) -> None:
-    """Not currently registered. Kept for future actions that
-    truly should be ignored, like cash in and out."""
-    return
-
-
 @register(Action.BUY, Action.SELL)
 def process_buy_sell(event: Event, state: State) -> None:
     state.matcher.process(event, state.portfolio)

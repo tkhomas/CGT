@@ -112,6 +112,19 @@ class ParseHelpersTests(unittest.TestCase):
             self.assertIsNone(parse_action(None, "test.csv", 2))
             self.assertIsNone(parse_action("", "test.csv", 2))
 
+    def test_parse_action_recognises_ignored_actions(self):
+        # Ignored actions are recognised, not unrecognised:
+        # they must not warn and must not be skipped.
+        cases = [
+            ("Stock Plan Activity", Action.STOCK_PLAN_ACTIVITY),
+            ("stock plan activity", Action.STOCK_PLAN_ACTIVITY),
+            ("Wire Sent", Action.WIRE_SENT),
+            ("wire sent", Action.WIRE_SENT),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(parse_action(text, "test.csv", 2), expected)
+
 
 class ParseCsvTests(unittest.TestCase):
     def setUp(self):
@@ -279,6 +292,62 @@ class ParseCsvTests(unittest.TestCase):
         events, skipped = parse_csv(path, _provider())
         self.assertEqual(skipped, 0)
         self.assertEqual(events[0].original_fees, Decimal(0))
+
+    def test_parse_csv_ignores_stock_plan_activity_and_wire_sent(self):
+        # Both rows shaped like a real Schwab export: the
+        # dates, actions and empty fields are as given,
+        # the ticker and description are made up. Both are
+        # dropped at parsing, silently: the stock plan row
+        # has a quantity but no price, the wire row has no
+        # quantity at all, and neither is a CGT event. A
+        # normal Buy in the same file still parses as usual.
+        path = _write_csv(
+            self.dir / "transactions.csv",
+            HEADER,
+            [
+                [
+                    "08/18/2026 as of 08/17/2026",
+                    "Stock Plan Activity",
+                    "ACME",
+                    "ACME HOLDINGS INC CLASS A",
+                    "1",
+                    "",
+                    "",
+                    "",
+                ],
+                [
+                    "09/04/2026",
+                    "Wire Sent",
+                    "",
+                    "WIRED FUNDS DISBURSED",
+                    "",
+                    "",
+                    "",
+                    "-$100.00",
+                ],
+                [
+                    "09/05/2026",
+                    "Buy",
+                    "ACME",
+                    "Buy ACME",
+                    "10",
+                    "$50.00",
+                    "$500.00",
+                    "$0.00",
+                ],
+            ],
+        )
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 1)
+
+        buy = events[0]
+        self.assertEqual(buy.action, Action.BUY)
+        self.assertEqual(buy.date, date(2026, 9, 5))
+        self.assertEqual(buy.symbol, "ACME")
 
 
 class ProviderDiscoveryTests(unittest.TestCase):
