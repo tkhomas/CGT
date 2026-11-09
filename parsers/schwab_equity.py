@@ -4,11 +4,11 @@ One lapse is two physical rows: the first carries the
 date, the action, the symbol and the quantity vested; the
 following row, with an empty date, carries the award
 details, including the fair market value price. The amount
-is not in the file: it is quantity times that price, so a
-lapse is exactly a buy of that many shares at that price.
-Everything about tax -- the tax withheld, the shares sold
-or withheld for it -- is ignored: that tax is already paid
-through income tax.
+is not in the file: it is quantity times that price, plus
+the fees, so a lapse is exactly a buy of that many shares
+at that price. Everything about tax -- the tax withheld,
+the shares sold or withheld for it -- is ignored: that tax
+is already paid through income tax.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from __future__ import annotations
 import csv
 import io
 import sys
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from models import Action, ParsedEvent, ProviderConfig
@@ -93,7 +93,22 @@ def _make_event(
         )
         return None
 
-    quantity_decimal = Decimal((header_row.get("Quantity") or "0").strip())
+    # Schwab writes large quantities with a thousands
+    # separator, as it does amounts. Anything that is still
+    # not a number is a bad row, warned about and skipped
+    # like the other bad rows, not a reason to kill the
+    # whole run.
+    try:
+        quantity_decimal = Decimal(
+            (header_row.get("Quantity") or "0").replace(",", "").strip()
+        )
+    except InvalidOperation:
+        print(
+            f"Warning: {path.name}:{line_no}: "
+            f"Quantity {header_row.get('Quantity')!r} is not a number, skipped",
+            file=sys.stderr,
+        )
+        return None
     if quantity_decimal != quantity_decimal.to_integral_value():
         print(
             f"Warning: {path.name}:{line_no}: "
@@ -122,6 +137,10 @@ def _make_event(
         )
         return None
 
+    # The amount is the money out: the shares at fair market
+    # value plus the fees. The matcher uses the amount as it
+    # stands, so the fees belong in it here, not added later.
+    fees = parse_money(header_row.get("FeesAndCommissions"))
     return ParsedEvent(
         date=parse_date(header_row["Date"], provider.date_format),
         action=action,
@@ -130,8 +149,8 @@ def _make_event(
         quantity=quantity,
         original_currency=provider.currency,
         original_price=price,
-        original_amount=quantity * price,
-        original_fees=parse_money(header_row.get("FeesAndCommissions")),
+        original_amount=quantity * price + fees,
+        original_fees=fees,
         provider=provider.name,
         source_file=path.name,
         row=line_no,

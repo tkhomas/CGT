@@ -142,6 +142,18 @@ class EquityTests(unittest.TestCase):
         self.assertEqual(events[0].quantity, 4)
         self.assertEqual(events[0].original_amount, Decimal("165.00"))
 
+    def test_lapse_with_fees_includes_them_in_the_amount(self):
+        # The amount is the money out: quantity times the
+        # fair market value plus the fees. The matcher uses
+        # the amount as it stands, so the fees belong in it
+        # here, not added later.
+        header = ",".join(HEADER) + "\n"
+        events, skipped = self._parse(header + _lapse_pair(fees="$1.00"))
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].original_amount, Decimal("166.00"))
+        self.assertEqual(events[0].original_fees, Decimal("1.00"))
+
     def test_wrapped_record_is_joined(self):
         # A record split across two lines -- the first
         # carrying the first eight columns, the second the
@@ -254,13 +266,27 @@ class EquityTests(unittest.TestCase):
         self.assertEqual(events, [])
         self.assertEqual(skipped, 1)
 
-    def test_fractional_and_zero_quantities_are_skipped(self):
+    def test_fractional_zero_and_unparseable_quantities_are_skipped(self):
         header = ",".join(HEADER) + "\n"
-        for label, quantity in [("fractional", "2.5"), ("zero", "0")]:
+        for label, quantity in [
+            ("fractional", "2.5"),
+            ("zero", "0"),
+            ("not a number", "ten"),
+        ]:
             with self.subTest(label=label):
                 events, skipped = self._parse(header + _lapse_pair(quantity=quantity))
                 self.assertEqual(events, [])
                 self.assertEqual(skipped, 1)
+
+    def test_quantity_with_thousands_separator_parses(self):
+        # Schwab writes large quantities with a thousands
+        # separator: "1,000" is a thousand units.
+        header = ",".join(HEADER) + "\n"
+        events, skipped = self._parse(header + _lapse_pair(quantity='"1,000"'))
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].quantity, 1000)
+        self.assertEqual(events[0].original_amount, Decimal("41250.00"))
 
 
 if __name__ == "__main__":

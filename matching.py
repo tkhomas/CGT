@@ -194,22 +194,21 @@ class Matcher:
         for event in self.events:
             if event.action == Action.BUY:
                 key = (event.symbol, event.date)
-                cost = event.pricing.amount + event.pricing.fees
+                # The amount is the money that moved, fees
+                # included: it is the lot's cost as it stands.
                 lot = buy_lots.get(key)
                 if lot is None:
                     buy_lots[key] = _BuyLot(
                         symbol=event.symbol,
                         date=event.date,
                         units=event.quantity,
-                        total_cost=cost,
+                        total_cost=event.pricing.amount,
                     )
                 else:
                     lot.units += event.quantity
-                    lot.total_cost += cost
+                    lot.total_cost += event.pricing.amount
             elif event.action == Action.SELL:
-                proceeds_per_unit = (
-                    event.pricing.amount - event.pricing.fees
-                ) / event.quantity
+                proceeds_per_unit = event.pricing.amount / event.quantity
                 sells.append(
                     PendingSell(
                         event=event,

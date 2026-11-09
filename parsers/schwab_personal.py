@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import sys
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from models import IGNORED_ACTIONS, INCOME_ACTIONS, Action, ParsedEvent, ProviderConfig
@@ -83,7 +83,23 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], 
                 )
                 continue
 
-            quantity_decimal = Decimal((row["Quantity"] or "0").strip())
+            # Schwab writes large quantities with a thousands
+            # separator, as it does amounts. Anything that is
+            # still not a number is a bad row, warned about
+            # and skipped like the other bad rows, not a
+            # reason to kill the whole run.
+            try:
+                quantity_decimal = Decimal(
+                    (row["Quantity"] or "0").replace(",", "").strip()
+                )
+            except InvalidOperation:
+                print(
+                    f"Warning: {path.name}:{reader.line_num}: "
+                    f"Quantity {row.get('Quantity')!r} is not a number, skipped",
+                    file=sys.stderr,
+                )
+                skipped += 1
+                continue
             if quantity_decimal != quantity_decimal.to_integral_value():
                 print(
                     f"Warning: {path.name}:{reader.line_num}: "
@@ -95,7 +111,15 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], 
                 continue
 
             price = parse_money(row["Price"])
-            amount = parse_money(row["Amount"])
+            fees = parse_money(row.get("Fees & Comm"))
+            # Schwab reports the Amount net of fees: a buy's
+            # Amount is money out, quantity x price plus fees,
+            # a sell's is money in, quantity x price minus
+            # fees. The Amount is the source of truth -- the
+            # money that actually moved -- so it is stored as
+            # written. Price, quantity and fees are only a
+            # check that the row adds up, never the value.
+            amount = abs(parse_money(row["Amount"]))
             quantity = int(quantity_decimal)
             if quantity_decimal <= 0:
                 print(
@@ -106,7 +130,23 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], 
                 skipped += 1
                 continue
 
-            if abs(quantity * price - amount) > Decimal("0.01"):
+            # The price is given to four decimals and the amount
+            # to cents, so only the amount's own rounding is
+            # left: a fixed 0.01 covers it. For a buy the cash
+            # out is the trade value plus fees, for a sell the
+            # cash in is the trade value minus fees, so the
+            # difference between the Amount and quantity x price
+            # is the fees, either way.
+            if action is Action.BUY:
+                difference = amount - quantity * price
+            else:
+                difference = quantity * price - amount
+            if abs(difference - fees) > Decimal("0.01"):
+                # The Amount is the source of truth, so the
+                # row is kept with its value; the warning is
+                # the only marker that the price does not add
+                # up, as it does not for a bond, whose price
+                # is quoted as a percent of par.
                 print(
                     f"Warning: {path.name}:{reader.line_num}: "
                     f"Quantity x Price ({quantity * price}) "
@@ -123,7 +163,7 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], 
                     original_currency=provider.currency,
                     original_price=price,
                     original_amount=amount,
-                    original_fees=parse_money(row.get("Fees & Comm")),
+                    original_fees=fees,
                     provider=provider.name,
                     source_file=path.name,
                     row=reader.line_num,

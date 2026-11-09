@@ -169,7 +169,7 @@ class ParseCsvTests(unittest.TestCase):
                     "Buy ACME",
                     "10",
                     "$50.00",
-                    "$500.00",
+                    "-$501.00",
                     "$1.00",
                 ],
                 [
@@ -179,7 +179,7 @@ class ParseCsvTests(unittest.TestCase):
                     "Sell ACME",
                     "8",
                     "$60.00",
-                    "$480.00",
+                    "$478.50",
                     "$1.50",
                 ],
             ],
@@ -196,7 +196,7 @@ class ParseCsvTests(unittest.TestCase):
         self.assertEqual(buy.quantity, 10)
         self.assertEqual(buy.original_currency, Currency.USD)
         self.assertEqual(buy.original_price, Decimal("50.00"))
-        self.assertEqual(buy.original_amount, Decimal("500.00"))
+        self.assertEqual(buy.original_amount, Decimal("501.00"))
         self.assertEqual(buy.original_fees, Decimal("1.00"))
         self.assertEqual(buy.provider, "Test Broker")
         self.assertEqual(buy.source_file, "transactions.csv")
@@ -206,15 +206,17 @@ class ParseCsvTests(unittest.TestCase):
         self.assertEqual(sell.action, Action.SELL)
         self.assertEqual(sell.quantity, 8)
         self.assertEqual(sell.original_price, Decimal("60.00"))
+        self.assertEqual(sell.original_amount, Decimal("478.50"))
         self.assertEqual(sell.original_fees, Decimal("1.50"))
         self.assertEqual(sell.row, 3)
 
     def test_parse_csv_skips_bad_rows_but_keeps_good_ones(self):
-        # Fractional quantity, non-positive quantity, and an
-        # unrecognised action are all the same outcome -- the
-        # row is skipped, the rest of the file still parses.
-        # The good row keeps its real file row number (5),
-        # not a renumbered event index.
+        # Fractional quantity, non-positive quantity, a
+        # quantity that is not a number, and an unrecognised
+        # action are all the same outcome -- the row is
+        # skipped, the rest of the file still parses. The
+        # good row keeps its real file row number (6), not
+        # a renumbered event index.
         path = _write_csv(
             self.dir / "transactions.csv",
             HEADER,
@@ -244,6 +246,16 @@ class ParseCsvTests(unittest.TestCase):
                     "01/18/2025",
                     "Buy",
                     "ACME",
+                    "not a number",
+                    "ten",
+                    "$50.00",
+                    "$500.00",
+                    "$0.00",
+                ],
+                [
+                    "01/19/2025",
+                    "Buy",
+                    "ACME",
                     "good",
                     "10",
                     "$50.00",
@@ -255,10 +267,10 @@ class ParseCsvTests(unittest.TestCase):
         err = io.StringIO()
         with redirect_stderr(err):
             events, skipped = parse_csv(path, _provider())
-        self.assertEqual(skipped, 3)
+        self.assertEqual(skipped, 4)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].quantity, 10)
-        self.assertEqual(events[0].row, 5)
+        self.assertEqual(events[0].row, 6)
 
     def test_parse_csv_amount_inconsistency_does_not_skip(self):
         # Quantity x price not matching amount is a warning,
@@ -286,6 +298,181 @@ class ParseCsvTests(unittest.TestCase):
         self.assertEqual(skipped, 0)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].original_amount, Decimal("999.00"))
+
+    def test_parse_csv_quantity_with_thousands_separator_parses(self):
+        # Schwab writes large quantities with a thousands
+        # separator, as it does amounts: "1,000" is a
+        # thousand units, not a broken row.
+        path = _write_csv(
+            self.dir / "transactions.csv",
+            HEADER,
+            [
+                [
+                    "01/15/2025",
+                    "Buy",
+                    "ACME",
+                    "big buy",
+                    '"1,000"',
+                    "$50.00",
+                    "$50000.00",
+                    "$0.00",
+                ]
+            ],
+        )
+        events, skipped = parse_csv(path, _provider())
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].quantity, 1000)
+        self.assertEqual(events[0].original_amount, Decimal("50000.00"))
+
+    def test_parse_csv_negative_trade_amount_is_its_magnitude(self):
+        # Schwab reports a buy as money out, so its Amount
+        # is negative. The amount of the trade is its
+        # magnitude, for a buy and for a sell alike, and
+        # neither is a mismatch: no warning.
+        path = _write_csv(
+            self.dir / "transactions.csv",
+            HEADER,
+            [
+                [
+                    "01/15/2025",
+                    "Buy",
+                    "ACME",
+                    "buy",
+                    "10",
+                    "$50.00",
+                    "-$500.00",
+                    "$0.00",
+                ],
+                [
+                    "01/16/2025",
+                    "Sell",
+                    "ACME",
+                    "sell",
+                    "8",
+                    "$60.00",
+                    "-$480.00",
+                    "$0.00",
+                ],
+            ],
+        )
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 2)
+        buy, sell = events
+        self.assertEqual(buy.original_amount, Decimal("500.00"))
+        self.assertEqual(sell.original_amount, Decimal("480.00"))
+
+    def test_parse_csv_amount_is_stored_as_written(self):
+        # Schwab reports the Amount net of fees: a buy's
+        # Amount is money out, quantity x price plus fees,
+        # a sell's is money in, quantity x price minus fees.
+        # The stored amount is the Amount as written -- the
+        # money that actually moved -- and the matcher uses
+        # it as the cost or the proceeds. The fees are in
+        # the amount and never added again.
+        path = _write_csv(
+            self.dir / "transactions.csv",
+            HEADER,
+            [
+                [
+                    "01/15/2025",
+                    "Buy",
+                    "ACME",
+                    "buy",
+                    "10",
+                    "$50.00",
+                    "-$501.00",
+                    "$1.00",
+                ],
+                [
+                    "01/16/2025",
+                    "Sell",
+                    "ACME",
+                    "sell",
+                    "8",
+                    "$60.00",
+                    "$478.50",
+                    "$1.50",
+                ],
+            ],
+        )
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 2)
+        buy, sell = events
+        self.assertEqual(buy.original_amount, Decimal("501.00"))
+        self.assertEqual(buy.original_fees, Decimal("1.00"))
+        self.assertEqual(sell.original_amount, Decimal("478.50"))
+        self.assertEqual(sell.original_fees, Decimal("1.50"))
+
+    def test_parse_csv_amount_rounding_does_not_warn(self):
+        # The amount is rounded to cents, so it can differ
+        # from quantity x price by half a cent: the trade is
+        # still the same trade, and the stored amount is the
+        # broker's figure.
+        path = _write_csv(
+            self.dir / "transactions.csv",
+            HEADER,
+            [
+                [
+                    "01/15/2025",
+                    "Buy",
+                    "ACME",
+                    "trade",
+                    "1",
+                    "$2033.0051",
+                    "-$2033.01",
+                    "$0.00",
+                ]
+            ],
+        )
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].original_amount, Decimal("2033.01"))
+
+    def test_parse_csv_bond_price_in_percent_of_par(self):
+        # A bond is quoted as a percent of par, not dollars
+        # per unit: 99.2344 means $0.992344 per $1 of face
+        # value. The price is stored as written -- it is
+        # only ever a check and a display, never the value
+        # -- so the row warns, like any row whose price does
+        # not add up, and is kept with the Amount as its
+        # value.
+        path = _write_csv(
+            self.dir / "transactions.csv",
+            HEADER,
+            [
+                [
+                    "01/15/2025",
+                    "Buy",
+                    "ACME",
+                    "US TREASURY NOTE",
+                    "1000",
+                    "$99.2344",
+                    "-$993.34",
+                    "$1.00",
+                ]
+            ],
+        )
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertNotEqual(err.getvalue(), "")
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].original_price, Decimal("99.2344"))
+        self.assertEqual(events[0].original_amount, Decimal("993.34"))
 
     def test_parse_csv_without_a_fees_column_gives_zero_fees(self):
         header = [

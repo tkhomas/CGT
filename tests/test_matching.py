@@ -35,8 +35,15 @@ def _event(
     price: int | Decimal,
     fees: int | Decimal = Decimal(0),
     provider: str = "Test Broker",
+    amount: int | Decimal | None = None,
 ) -> Event:
-    amount = Decimal(quantity) * Decimal(price)
+    # The amount is the money that moved, fees included;
+    # it defaults to quantity x price when no fees are
+    # given. Fees are stored on the event but the matcher
+    # never adds or subtracts them: they are already in
+    # the amount.
+    if amount is None:
+        amount = Decimal(quantity) * Decimal(price)
     return Event(
         date=when,
         action=action,
@@ -46,7 +53,7 @@ def _event(
         pricing=Pricing(
             original_currency=Currency.GBP,
             original_price=Decimal(price),
-            original_amount=amount,
+            original_amount=Decimal(amount),
             original_fees=Decimal(fees),
             original_units_per_gbp=Decimal(1),
             fx_source="GBP",
@@ -136,14 +143,28 @@ class PoolTests(unittest.TestCase):
         self.assertEqual(_pool(portfolio, "ACME"), (10, Decimal(150)))
 
     def test_fees_are_in_cost_and_proceeds(self) -> None:
+        # A buy of 10 @ £10 with £5 fees cost £105, a sell
+        # of 10 @ £20 with £5 fees brought in £195: the
+        # amounts already include the fees, and the matcher
+        # uses them as they stand, never adding or
+        # subtracting the fees again. If it did, the cost
+        # would be £110 and the proceeds £190.
         disposals, portfolio = _run(
             [
-                _event("ACME", date(2025, 1, 1), Action.BUY, 10, 10, fees=5),
-                _event("ACME", date(2025, 3, 1), Action.SELL, 10, 20, fees=5),
+                _event(
+                    "ACME", date(2025, 1, 1), Action.BUY, 10, 10, fees=5, amount=105
+                ),
+                _event(
+                    "ACME",
+                    date(2025, 3, 1),
+                    Action.SELL,
+                    10,
+                    20,
+                    fees=5,
+                    amount=195,
+                ),
             ]
         )
-        # Buy cost is amount + fees (£105), sell proceeds
-        # are amount - fees (£195).
         self.assertEqual(disposals[0].cost, Decimal(105))
         self.assertEqual(disposals[0].proceeds, Decimal(195))
         self.assertEqual(disposals[0].gain, Decimal(90))
