@@ -4,31 +4,11 @@ from __future__ import annotations
 
 import csv
 import sys
-from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
 from models import IGNORED_ACTIONS, INCOME_ACTIONS, Action, ParsedEvent, ProviderConfig
-from parsers.common import parse_money
-
-
-def parse_date(text: str, date_format: str) -> date:
-    # Returns a native date object, not a string. Internally the
-    # date is unambiguous; format it as ISO YYYY-MM-DD only on output.
-    # Schwab can show two dates, e.g. "08/18/2026 as of
-    # 08/17/2026": the first date is the transaction date,
-    # the second is the date it is reported as of. Take the
-    # first. (Vests are an exception in principle: shares
-    # are acquired at the vest date, not the later posting
-    # date. Stock plan events are ignored for now, so that
-    # distinction does not bite here; revisit it if a trade
-    # ever arrives in this form.)
-    cleaned = text.strip().lower()
-    marker = " as of "
-    if marker in cleaned:
-        cleaned = cleaned[: cleaned.index(marker)].strip()
-    return datetime.strptime(cleaned, date_format).date()
-
+from parsers.common import parse_date, parse_money
 
 # Schwab uses several names for the same thing: a dividend
 # is "Qualified Dividend" or "Pr Yr Non-Qual Div", and tax

@@ -22,10 +22,9 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
-from parsers.common import parse_money
-
 from models import Action, Currency, ProviderConfig
-from parsers.schwab_personal import parse_action, parse_csv, parse_date
+from parsers.common import parse_date, parse_money
+from parsers.schwab_personal import parse_action, parse_csv
 from providers import find_inputs, load_provider_config
 
 

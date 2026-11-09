@@ -1,0 +1,7 @@
+"Date","Action","Symbol","Description","Quantity","FeesAndCommissions","DisbursementElection","Amount","AwardDate","AwardId","FairMarketValuePrice","SalePrice","SharesSoldWithheldForTaxes","NetSharesDeposited","Taxes"
+"01/10/2025","Lapse","ACME","Restricted Stock Lapse","10","$1.00","","","","","","","","",""
+"","","","","","","","","06/03/2024","887101","$50.00","","0","10","$0.00"
+"04/15/2025","Lapse","ACME","Restricted Stock Lapse","7","$1.00","","","","","","","","",""
+"","","","","","","","","07/15/2024","887102","$52.00","","1","6","$26.00"
+"04/16/2025","Lapse","ACME","Restricted Stock Lapse","3","$0.50","","","","","","","","",""
+"","","","","","","","","08/01/2024","887103","$53.00","","0","3","$0.00"

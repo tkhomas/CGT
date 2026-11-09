@@ -1,14 +1,30 @@
 """Helpers shared by every parser.
 
 Only what is genuinely format-independent lives here.
-Anything tied to one file's shape -- the "as of" date in
-the transactions file, the two-row lapse in the vesting
+Anything tied to one file's shape -- the two-row lapse
+in the equity file, the income aliases in the personal
 file -- lives in that format's own module.
 """
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal
+
+
+def parse_date(text: str, date_format: str) -> date:
+    # Returns a native date object, not a string. Internally the
+    # date is unambiguous; format it as ISO YYYY-MM-DD only on output.
+    # Schwab can show two dates, e.g. "08/18/2026 as of
+    # 08/17/2026": the first date is the transaction date,
+    # the second is the date it is reported as of. Take the
+    # first. For a lapse that first date is the vest date,
+    # which is the acquisition date.
+    cleaned = text.strip().lower()
+    marker = " as of "
+    if marker in cleaned:
+        cleaned = cleaned[: cleaned.index(marker)].strip()
+    return datetime.strptime(cleaned, date_format).date()
 
 
 def parse_money(text: str | None) -> Decimal:
