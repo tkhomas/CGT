@@ -31,21 +31,19 @@ Pass 2, pool, chronological, no lookahead:
   * The pool after each pool-changing event is recorded
     in pool_snapshots, so holdings can be read from here.
 
-Gains is a collection of Disposals. A Disposal is one gain,
-a matched portion of a Sell, with its own cost, proceeds,
-match type, and buy date if any. One Sell can become
-several Disposals. Disposals are sorted at the end of
-finish() by sell date, then match order (same-day,
-bed-and-breakfast, pool), then buy date, which is the
-order reporting presents them in.
+A Disposal is one gain: a matched portion of a Sell, with
+its own cost, proceeds, match type, and buy date if any.
+One Sell can become several Disposals. They are sorted at
+the end of finish() by sell date, then match order
+(same-day, bed-and-breakfast, pool), then buy date, which
+is the order reporting presents them in.
 
 UK CGT only, so all values must be in GBP. Conversion
 to GBP is via fx.convert_events before matching.
 
 Pool insufficient should never happen. When it does, it
-screams with a PoolInsufficientError, and main prints
-all events for that ticker. No cost-0 disposal is ever
-created for it.
+screams with a PoolInsufficientError instead of costing
+the missing units at zero.
 """
 
 from __future__ import annotations
@@ -137,13 +135,11 @@ class _BuyLot:
 
 @dataclass
 class Matcher:
-    # Events collected by process(), matched and pooled by
-    # finish(). process() itself changes nothing: matching
-    # needs the whole timeline, including buys that arrive
-    # after a sell, so no disposal can be decided on arrival.
-    # Events must arrive in timeline order, as built by
-    # build_global_timeline; both passes rely on that order
-    # and do not sort again.
+    # process() only collects: matching needs the whole
+    # timeline, including buys that arrive after a sell, so
+    # no disposal can be decided on arrival. Events must
+    # arrive in timeline order, as built by
+    # build_global_timeline; neither pass sorts again.
     events: list[Event] = field(default_factory=list)
     gains: Gains = field(default_factory=Gains)
     pool_snapshots: list[PoolSnapshot] = field(default_factory=list)
@@ -169,10 +165,9 @@ class Matcher:
         )
 
     def _matching_pass(self) -> tuple[list[PendingSell], list[_BuyLot]]:
-        # Lots and sells are both in timeline order. Each
-        # lot is walked once, oldest first, and each sell
-        # is taken one by one, in order, never revisited
-        # once it is filled or out of the 30-day window.
+        # Each lot is walked once, oldest first; a sell is
+        # never revisited once it is filled or out of the
+        # 30-day window.
         lots, sells = self._group_events()
         sells_by_symbol: dict[str, list[PendingSell]] = {}
         for sell in sells:
@@ -274,8 +269,6 @@ class Matcher:
     def _find_same_day(
         self, symbol_sells: list[PendingSell], index: int, lot_date: date
     ) -> int | None:
-        # First sell on the lot's date, if any, scanning
-        # forward from the oldest unmatched sell.
         same_day = index
         while (
             same_day < len(symbol_sells)

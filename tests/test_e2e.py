@@ -22,8 +22,7 @@ FIXTURES = ROOT / "fixtures"
 MAIN = ROOT / "main.py"
 
 # Real published USD rates per £1 for the months the
-# fixtures' USD trades fall in. HMRC months are 2015-2020,
-# Trade Tariff months are 2021 onwards.
+# fixtures' USD trades fall in.
 USD_RATES: dict[tuple[int, int], str] = {
     (2019, 1): "1.2643",
     (2020, 1): "1.3071",
@@ -160,7 +159,6 @@ class EndToEndTests(unittest.TestCase):
         self.assertIn("1.2707", diagnostic.read_text(encoding="utf-8"))
 
     def test_per_year_total_gains(self) -> None:
-        # Verified by hand from the fixture data on 2026-11-03.
         # Dividends must not change these: they are income,
         # not disposals, and income never touches a pool or
         # a gain.
@@ -176,8 +174,8 @@ class EndToEndTests(unittest.TestCase):
                 self.assertIn(f"<th>Total gain</th><td class='num'>{total}</td>", html)
 
     def test_per_year_dividends_and_interest(self) -> None:
-        # Verified by hand from the fixture data. Totals are
-        # sums of unrounded GBP amounts, shown to the penny:
+        # Totals are sums of unrounded GBP amounts, shown to
+        # the penny:
         # 2024/25 dividends are $10.50 + $20.00 at the Mar
         # 2025 rate of 1.2585, tax $3.00 at the same rate.
         # 2025/26 is a prior-year dividend of $18.00 and

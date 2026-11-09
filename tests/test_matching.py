@@ -90,7 +90,8 @@ def _run(events: list[Event]) -> tuple[list[Disposal], Portfolio]:
     """Run a list of events through the timeline and dispatch.
 
     Returns (disposals, portfolio). Disposals are in the
-    order the matcher created them.
+    matcher's final order: sell date, then match type,
+    then buy date.
     """
     state = State()
     for event in build_global_timeline(events):

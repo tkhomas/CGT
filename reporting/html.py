@@ -76,10 +76,9 @@ def _fx_url(fx_source: str) -> str | None:
 
 def _fx_cell(fx_source: str) -> str:
     # Human source name, not the internal label and not a file
-    # name: "hmrc-xml:2019-01" is what leaked file-like text
-    # into the disposals report. The URL itself is still the
-    # monthly source file, that is the audit link, but it
-    # lives in the href, not in the visible text.
+    # name. The URL itself is still the monthly source file,
+    # the audit link, but it lives in the href, not in the
+    # visible text.
     if fx_source == "GBP":
         return "GBP, no conversion"
     try:
@@ -118,13 +117,11 @@ def _holdings_rows(holdings: dict[str, tuple[int, Decimal]]) -> str:
 def _disposals_rows(disposals: list[Disposal]) -> str:
     if not disposals:
         return "<tr><td colspan='8'>No disposals.</td></tr>"
-    # The matcher appends disposals in resolution order, not
-    # sell-date order: a bed-and-breakfast disposal only exists
-    # when its buy arrives, a pool disposal only when its queue
-    # ages out. The report is read by sell date, so sort here,
-    # in reporting, not in the matcher. Same sell date and
-    # symbol: same-day, then bed-and-breakfast, then pool,
-    # then by buy date. Totals are unaffected by the order.
+    # Sorted by sell date, then symbol, then match type
+    # (same-day, bed-and-breakfast, pool), then buy date --
+    # the order the report is read in. The matcher sorts
+    # the same way; this is the report's own guarantee of
+    # that order. Totals are unaffected by the order.
     match_order = {"same-day": 0, "bed-and-breakfast": 1, "pool": 2}
     ordered = sorted(
         disposals,
@@ -152,8 +149,6 @@ def _disposals_rows(disposals: list[Disposal]) -> str:
 
 
 def _events_rows(timeline: list[Event], internal_source: bool) -> str:
-    # internal_source False: broker name only, no file names.
-    # internal_source True: broker name plus file and row.
     colspan = 12 if internal_source else 11
     if not timeline:
         return f"<tr><td colspan='{colspan}'>No events.</td></tr>"
@@ -248,11 +243,10 @@ whose code is open source and can be audited.</p>
 
 
 def _methodology_html() -> str:
-    # Only the general, auditable part of the old preamble:
-    # the matching rules and the currency rule, with official
-    # links. Left out deliberately: any broker-specific price
-    # source, the DEPRECATED method, and the date-format note,
-    # which is per-provider config, not methodology.
+    # General, auditable methodology only: the matching rules
+    # and the currency rule, with official links.
+    # Broker-specific material and per-provider config do
+    # not belong here.
     return """<h2>Methodology</h2>
 <p>Shares are held in a Section 104 pool per stock, at average
 cost. Adding shares to the pool recalculates that average cost.</p>

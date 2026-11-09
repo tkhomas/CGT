@@ -13,8 +13,6 @@ from decimal import Decimal
 
 
 def parse_date(text: str, date_format: str) -> date:
-    # Returns a native date object, not a string. Internally the
-    # date is unambiguous; format it as ISO YYYY-MM-DD only on output.
     # Schwab can show two dates, e.g. "08/18/2026 as of
     # 08/17/2026": the first date is the transaction date,
     # the second is the date it is reported as of. Take the
@@ -32,7 +30,6 @@ def parse_money(text: str | None) -> Decimal:
     # formatting cleanup only: it does NOT decide the currency.
     # "$" alone is ambiguous (USD, MXN, AUD and others all use it),
     # so the currency always comes from the provider config.
-    # Symbols stripped here: $, £, €, ¥, and similar.
     if text is None or text.strip() == "":
         return Decimal(0)
     cleaned = text.strip()

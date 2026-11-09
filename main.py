@@ -18,7 +18,7 @@ Layout, with --data-dir defaulting to "data":
   To bypass the cached FX files and redownload them, run:
     python main.py --force-fx-download
   A cached file is then ignored, and the new download replaces
-  it only on success. Every download prints its URL and destination.
+  it only on success.
 """
 
 from __future__ import annotations
@@ -149,9 +149,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     production_date = date.today()
-    # A blank line between the processing chatter above --
-    # parse warnings, FX downloads -- and the results below,
-    # so the report list reads as its own section.
+    # Blank line between processing chatter and the report list.
     print()
     for tax_year in tax_years:
         year_disposals = disposals_for_year(all_disposals, tax_year)
@@ -195,12 +193,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _print_skipped_summary(total_skipped: int) -> None:
-    # The detailed warnings already printed while parsing,
-    # in the middle of the run's other output, where they
-    # are easy to miss -- a skipped row is in no report,
-    # so missing one means missing data. Repeat the count
-    # at the end, on its own and separated by blank lines,
-    # so it is the last thing seen.
+    # Warnings print mid-run, where they are easy to miss --
+    # and a skipped row is in no report, so missing one
+    # means missing data. Repeat the count at the end, on
+    # its own, so it is the last thing seen.
     if total_skipped <= 0:
         return
     # Flush stdout first: when output is piped, stdout is
@@ -220,7 +216,7 @@ def _print_skipped_summary(total_skipped: int) -> None:
 def clean_reports(output_dir: Path) -> int:
     # Report files only, never cache or inputs. Patterns are
     # the ones this program writes, plus the old single
-    # report.html, which would otherwise go stale.
+    # report.html.
     cleaned = 0
     for pattern in (
         "portfolio-*.html",

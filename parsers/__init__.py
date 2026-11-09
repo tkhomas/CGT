@@ -14,8 +14,6 @@ from pathlib import Path
 from models import ParsedEvent, ProviderConfig
 from parsers import schwab_equity, schwab_personal
 
-# Parser name, as written in a provider config's "parser"
-# field, to the function that parses one file of it.
 PARSERS = {
     "schwab_personal": schwab_personal.parse_csv,
     "schwab_equity": schwab_equity.parse_csv,

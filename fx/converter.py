@@ -9,14 +9,6 @@ Rate lookup, in order, one event at a time:
   3. UserProvidedRatesProvider, last resort only.
      It never overrides a working provider rate.
 
-UserProvidedRatesProvider is just another provider, local only,
-no download component: a single file, <data>/fx/user-provided.json,
-a plain list of {"year", "month", "currency",
-"gbp_to_currency_rate"} entries, units per GBP.
-Ideally empty, [], or missing. A rate from it is labelled
-user-provided:YYYY-MM on every Event, and a warning is
-printed when it is first used in a run.
-
 On exit, a diagnostic file is written, never read back:
 cache/fx/diagnostic.json, rates actually used, with sources.
 """
@@ -129,7 +121,6 @@ class FxConverter:
         return False
 
     def _provider_for(self, year: int) -> FxProvider | None:
-        # Single dispatch table, disjoint year ranges.
         if year >= 2021:
             return TradeTariffProvider(self.fx_dir, self.force_download)
         if 2015 <= year < 2021:
@@ -209,13 +200,9 @@ class FxConverter:
         return [self.convert_event(parsed) for parsed in parsed_events]
 
     def _write_diagnostic(self) -> None:
-        # Overwritten each run, never read back.
         self.fx_dir.mkdir(parents=True, exist_ok=True)
         entries = []
-        # Sort by currency code, not by the Currency enum itself:
-        # enum members are not orderable, so sorted() on the
-        # (year, month, currency) key fails as soon as one month
-        # has two currencies in use.
+        # Sort by currency code: enum members are not orderable.
         for (year, month, currency), (rate, source) in sorted(
             self._rates.items(),
             key=lambda item: (item[0][0], item[0][1], item[0][2].value),

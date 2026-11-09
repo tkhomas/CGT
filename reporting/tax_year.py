@@ -3,11 +3,10 @@
 A tax year runs 6 April to 5 April. A disposal belongs to
 the tax year of its sell date, not its buy date.
 
-No pausing in the main loop, and no change to matching:
-the matcher runs the full timeline first, so a sale near
-year end is matched exactly as it should be, even if the
-matching buy falls in the next tax year. Grouping happens
-afterwards, from the finished disposals and timeline.
+Grouping happens after matching, from the finished
+disposals and timeline, so a sale near year end is
+matched exactly as it should be even if its buy falls
+in the next tax year.
 Holdings are the matcher's pool snapshots, read at year
 end, not a second pass over the timeline.
 
@@ -26,11 +25,10 @@ that has not happened yet, and, if it is the latest year,
 more events can still occur in it.
 
 Finality is judged against the production date, not the
-last event date. The last event date is not the end of
-the world: there may simply have been no transactions
-since then, and a year whose bed-and-breakfast window
-closed months ago in real time is final even if no later
-transaction happens to exist in the data.
+last event date: there may simply have been no
+transactions since then, and a year whose
+bed-and-breakfast window closed months ago is final even
+if no later transaction exists in the data.
 """
 
 from __future__ import annotations
@@ -87,10 +85,6 @@ def tax_years_for(timeline: list[Event], disposals: list[Disposal]) -> list[TaxY
 
 
 def is_current(tax_year: TaxYear, as_of: date) -> bool:
-    # as_of is the report production date, not the last
-    # event date. Final only once as_of is past year end
-    # + 30 days: after that, no later buy can still match
-    # a sale in this year, and the year itself has ended.
     return not (as_of > tax_year.end + timedelta(days=BED_AND_BREAKFAST_DAYS))
 
 
@@ -144,12 +138,11 @@ def income_for_year(income: list[Event], tax_year: TaxYear) -> IncomeTotals:
     # row exists with the same symbol on the same date, and
     # tax on interest otherwise: tax and its income are
     # always the same day, and no dividend row has an empty
-    # symbol. No pairing of individual rows is needed --
-    # only the category matters, and two dividends for the
-    # same stock on the same day land in the same bucket
-    # either way. A tax row whose dividend row is missing
-    # from the data lands in interest tax; the raw events
-    # are still shown, so that is visible, not silent.
+    # symbol. No pairing of individual rows is needed,
+    # only the category matters. A tax row whose dividend
+    # row is missing from the data lands in interest tax;
+    # the raw events are still shown, so that is visible,
+    # not silent.
     year_income = [event for event in income if tax_year_of(event.date) == tax_year]
     dividend_days = {
         (event.symbol, event.date)
@@ -179,13 +172,11 @@ def holdings_at_year_end(
     tax_year_end: date,
 ) -> dict[str, tuple[int, Decimal]]:
     # Holdings are the pool as the matcher left it: the last
-    # snapshot per ticker on or before year end. No
-    # recomputation from the timeline -- the matcher already
-    # recorded every pool change, in order, during its pool
-    # pass. A sale matched by a later buy never touches the
-    # pool, so it never appears here; a pool disposal does,
-    # on its sell date. Snapshots are chronological, so the
-    # first one after year end ends the walk.
+    # snapshot per ticker on or before year end. A sale
+    # matched by a later buy never touches the pool, so it
+    # never appears here; a pool disposal does, on its sell
+    # date. Snapshots are chronological, so the first one
+    # after year end ends the walk.
     holdings: dict[str, tuple[int, Decimal]] = {}
     for snapshot in pool_snapshots:
         if snapshot.date > tax_year_end:

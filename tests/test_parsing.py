@@ -104,8 +104,7 @@ class ParseHelpersTests(unittest.TestCase):
         for text, expected in cases:
             with self.subTest(text=text):
                 self.assertEqual(parse_action(text, "test.csv", 2), expected)
-        # An action that can never be added to the enum:
-        # unrecognised actions return None, they are not
+        # Unrecognised actions return None, they are not
         # silently treated as a buy or a sell.
         err = io.StringIO()
         with redirect_stderr(err):
@@ -318,13 +317,12 @@ class ParseCsvTests(unittest.TestCase):
         self.assertEqual(events[0].original_fees, Decimal(0))
 
     def test_parse_csv_ignores_stock_plan_activity_and_wire_sent(self):
-        # Both rows shaped like a real Schwab export: the
-        # dates, actions and empty fields are as given,
-        # the ticker and description are made up. Both are
-        # dropped at parsing, silently: the stock plan row
-        # has a quantity but no price, the wire row has no
-        # quantity at all, and neither is a CGT event. A
-        # normal Buy in the same file still parses as usual.
+        # Both rows shaped like a real Schwab export, with
+        # made-up tickers. Both are dropped at parsing,
+        # silently: the stock plan row has a quantity but
+        # no price, the wire row has no quantity at all,
+        # and neither is a CGT event. A normal Buy in the
+        # same file still parses as usual.
         path = _write_csv(
             self.dir / "transactions.csv",
             HEADER,
@@ -379,10 +377,9 @@ class ParseCsvTests(unittest.TestCase):
         # carry no quantity and no price: the Amount is the
         # value, positive for a dividend or interest,
         # negative for tax already paid. A prior-year
-        # dividend is still just a dividend here; the tax
-        # year it lands in is decided by its payment date,
-        # later. A normal Buy in the same file still
-        # parses as usual.
+        # dividend is still just a dividend here; its tax
+        # year is decided by its payment date. A normal
+        # Buy in the same file still parses as usual.
         path = _write_csv(
             self.dir / "transactions.csv",
             HEADER,

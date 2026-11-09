@@ -1,10 +1,9 @@
 """Portfolio: the state of assets at a moment in time.
 
-Only pools grouped by ticker. No event lists, no income lists,
-no unsupported list. Dividends and interest do not change
-holdings, so they do not touch the portfolio. Their totals,
-and gains, will live in a separate object later, global for
-now, per tax year later.
+Only pools grouped by ticker. Dividends and interest do not
+change holdings, so they do not touch the portfolio; gains
+and income totals live elsewhere, grouped per tax year in
+reporting.
 """
 
 from __future__ import annotations

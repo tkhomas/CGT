@@ -60,7 +60,7 @@ def load_provider_config(provider_dir: Path) -> ProviderConfig | None:
     # The parser is read here but not validated: a provider
     # without a usable parser is not skipped, its files are
     # ignored one by one in find_inputs, with a warning per
-    # file, so it is clear exactly what was left out.
+    # file, so it is clear what was left out.
     parser_name = data.get("parser")
     if parser_name is not None and not isinstance(parser_name, str):
         print(
@@ -132,7 +132,7 @@ def find_inputs(data_dir: Path) -> list[ProviderInput] | None:
         )
         for path in files:
             if path.name == CONFIG_FILENAME:
-                continue  # config, not data, no warning
+                continue
             if path.suffix.lower() != ".csv":
                 print(
                     f"Warning: {path} is not a CSV or config file, skipped",

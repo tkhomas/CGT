@@ -98,7 +98,7 @@ class TradeTariffProvider(FxProvider):
         return rates[currency]
 
     def _parse(self, raw_path: Path) -> dict[Currency, Decimal]:
-        # Header, verified against the real file:
+        # Expected header:
         # Country/Territories,Currency,Currency Code,
         # Currency Units per £1,Start date,End date
         with raw_path.open(newline="", encoding="utf-8-sig") as f:
@@ -271,10 +271,9 @@ class HmrcXmlProvider(FxProvider):
     def _check_period(
         self, raw_path: Path, period: str | None, year: int, month: int
     ) -> None:
-        # Period="01/Dec/2020 to 31/Dec/2020". A served file for
-        # the wrong month must not silently give a wrong rate.
-        # Month names are mapped explicitly, not via strptime
-        # %b, which is locale-dependent.
+        # A served file for the wrong month must not silently
+        # give a wrong rate. Month names are mapped explicitly,
+        # not via strptime %b, which is locale-dependent.
         if period is None:
             raise ValueError(f"{raw_path}: missing Period attribute")
         try:
@@ -314,7 +313,6 @@ class UserProvidedRatesProvider(FxProvider):
     _FIELDS = ("year", "month", "currency", "gbp_to_currency_rate")
 
     def __init__(self, user_path: Path) -> None:
-        # No fx_dir, no download. The local file is the whole source.
         self.user_path = user_path
         self._rates: dict[tuple[int, int, Currency], Decimal] | None = None
         self._warned: set[tuple[int, int, Currency]] = set()
@@ -328,7 +326,6 @@ class UserProvidedRatesProvider(FxProvider):
         return self.user_path
 
     def download_urls(self, year: int, month: int) -> list[str]:
-        # No download component.
         return []
 
     def get_rate(self, year: int, month: int, currency: Currency) -> Decimal:
@@ -412,7 +409,6 @@ class UserProvidedRatesProvider(FxProvider):
 
     @staticmethod
     def _parse_int(value: object, where: str, field: str) -> int:
-        # int, or a string of digits, nothing else: no floats, no bools.
         if isinstance(value, bool):
             raise TypeError(f"{where}: bad {field} {value!r}")
         if isinstance(value, int):

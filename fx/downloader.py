@@ -1,17 +1,16 @@
 """Download a file over HTTPS with curl, verified, atomically.
 
-Curl only, no urllib route. Curl uses the system certificate
-store, the same store a browser uses, so it works on machines
-where Python's own CA bundle does not trust the site.
-Verification is not disabled.
+Curl uses the system certificate store, the same store a
+browser uses, so it works on machines where Python's own
+CA bundle does not trust the site. Verification is not
+disabled.
 
 Curl is a prerequisite, not an optional fallback. If curl
 is not found, the download fails with a clear error.
 
 On success, a message is printed to stderr naming the URL
-and the destination, so a download is never silent. A file
-already in cache is not a download, so no message is printed
-for it. On failure, nothing is saved, so a later run retries
+and the destination, so a download is never silent.
+On failure, nothing is saved, so a later run retries
 cleanly, and a forced redownload never clobbers a cached file
 with a failed download.
 """
@@ -89,8 +88,6 @@ def download_file(urls: str | list[str], dest: Path) -> None:
                 tmp_path.unlink(missing_ok=True)
             except Exception as exc:  # noqa: BLE001
                 # Cleanup only, never masks the download error.
-                # missing_ok=True already covers a missing file,
-                # so this only fires on a real cleanup failure.
                 print(
                     f"Warning: could not remove temporary download file "
                     f"{tmp_path}: {exc}",
@@ -103,7 +100,7 @@ def download_file(urls: str | list[str], dest: Path) -> None:
     try:
         tmp_path.unlink(missing_ok=True)
     except Exception as exc:  # noqa: BLE001
-        # Cleanup only, never masks the download error raised below.
+        # Cleanup only, never masks the download error.
         print(
             f"Warning: could not remove temporary download file {tmp_path}: {exc}",
             file=sys.stderr,

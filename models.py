@@ -22,12 +22,12 @@ class Action(Enum):
     WITHHOLDING_TAX = "withholding tax"
 
 
-# Actions that are recognised but are not CGT events, so
-# they are dropped at parsing and never reach the timeline,
-# the FX converter, or a processor. Stock plan activity is
-# drawn from a different report later; a wire sent is cash
-# out. They are listed here only so they are recognised
-# rather than warned about as unrecognised.
+# Recognised but not CGT events, so they are dropped at
+# parsing and never reach the timeline, the FX converter,
+# or a processor. Stock plan activity is in the equity
+# file; a wire sent is cash out. They are listed here only
+# so they are recognised rather than warned about as
+# unrecognised.
 IGNORED_ACTIONS: frozenset[Action] = frozenset(
     {Action.STOCK_PLAN_ACTIVITY, Action.WIRE_SENT}
 )
@@ -35,10 +35,7 @@ IGNORED_ACTIONS: frozenset[Action] = frozenset(
 
 # Income actions: dividends, interest, and tax already
 # withheld from either. One processor collects them all;
-# the sums per tax year are made at reporting, where a
-# withholding row is counted as dividend tax if a dividend
-# row exists with the same symbol on the same date, and
-# as interest tax otherwise.
+# the sums per tax year are made at reporting.
 # Standing assumption: all of this tax is foreign tax
 # withheld at source -- in practice US tax taken by
 # Schwab, NRA withholding on a non-US person -- and none
@@ -49,8 +46,8 @@ INCOME_ACTIONS: frozenset[Action] = frozenset(
 )
 
 
-# Global ordering within a single date, as a simple list.
-# Earlier in the list means earlier in processing that day.
+# Global ordering within a single date. Earlier in the
+# list means earlier in processing that day.
 # Ignored actions are dropped at parsing, so they are not
 # in this list. A new action is added to this list in the
 # same chunk as its processor, never before.
