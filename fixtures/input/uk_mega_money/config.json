@@ -1,5 +1,6 @@
 {
   "name": "UK Mega Money -- high profits",
   "date_format": "%d/%m/%Y",
-  "currency": "GBP"
+  "currency": "GBP",
+  "parser": "schwab_personal"
 }

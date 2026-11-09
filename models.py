@@ -78,6 +78,11 @@ class ProviderConfig:
     name: str
     date_format: str
     currency: Currency
+    # Parser name, as in parsers.PARSERS. No default: a
+    # provider without one has its files ignored, with a
+    # warning per file, instead of being parsed as the
+    # wrong format.
+    parser: str | None = None
 
 
 @dataclass

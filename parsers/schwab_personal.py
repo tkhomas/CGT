@@ -1,4 +1,4 @@
-"""CSV row parsing into ParsedEvents."""
+"""Schwab personal brokerage transactions CSV: one row per event, into ParsedEvents."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from models import IGNORED_ACTIONS, INCOME_ACTIONS, Action, ParsedEvent, ProviderConfig
+from parsers.common import parse_money
 
 
 def parse_date(text: str, date_format: str) -> date:
@@ -66,20 +67,6 @@ def parse_action(text: str | None, source_file: str, row: int) -> Action | None:
         file=sys.stderr,
     )
     return None
-
-
-def parse_money(text: str | None) -> Decimal:
-    # Strip currency symbols and thousands separators. This is
-    # formatting cleanup only: it does NOT decide the currency.
-    # "$" alone is ambiguous (USD, MXN, AUD and others all use it),
-    # so the currency always comes from the provider config.
-    # Symbols stripped here: $, £, €, ¥, and similar.
-    if text is None or text.strip() == "":
-        return Decimal(0)
-    cleaned = text.strip()
-    for symbol in ("$", "£", "€", "¥", "₹"):
-        cleaned = cleaned.replace(symbol, "")
-    return Decimal(cleaned.replace(",", "").strip())
 
 
 def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], int]:

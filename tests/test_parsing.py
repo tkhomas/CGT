@@ -1,5 +1,5 @@
-"""Tests for event parsing: parsing.py and provider discovery
-in providers.py.
+"""Tests for event parsing: parsers/schwab_personal.py and
+provider discovery in providers.py.
 
 One file, one test per piece of real behaviour, not one test
 per edge case. Cases with the same outcome are grouped in a
@@ -22,8 +22,10 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+from parsers.common import parse_money
+
 from models import Action, Currency, ProviderConfig
-from parsing import parse_action, parse_csv, parse_date, parse_money
+from parsers.schwab_personal import parse_action, parse_csv, parse_date
 from providers import find_inputs, load_provider_config
 
 
@@ -508,7 +510,11 @@ class ProviderDiscoveryTests(unittest.TestCase):
     def test_load_provider_config(self):
         valid = {"name": "  Broker A  ", "date_format": "%m/%d/%Y", "currency": "USD"}
         cases = [
-            ("valid, name stripped", valid, ("Broker A", "%m/%d/%Y", Currency.USD)),
+            (
+                "valid, name stripped",
+                valid,
+                ("Broker A", "%m/%d/%Y", Currency.USD, None),
+            ),
             ("missing file", None, None),
             ("not an object", ["not", "a", "dict"], None),
             ("missing name", {**valid, "name": ""}, None),
@@ -518,6 +524,14 @@ class ProviderDiscoveryTests(unittest.TestCase):
                 None,
             ),
             ("unknown currency", {**valid, "currency": "ZZZ"}, None),
+            (
+                "parser schwab_personal",
+                {**valid, "parser": "schwab_personal"},
+                ("Broker A", "%m/%d/%Y", Currency.USD, "schwab_personal"),
+            ),
+            # No parser is not a bad config: the provider
+            # loads, and its files are ignored in find_inputs.
+            ("no parser", valid, ("Broker A", "%m/%d/%Y", Currency.USD, None)),
         ]
         for label, config, expected in cases:
             with self.subTest(label=label):
@@ -535,6 +549,7 @@ class ProviderDiscoveryTests(unittest.TestCase):
                             name=expected[0],
                             date_format=expected[1],
                             currency=expected[2],
+                            parser=expected[3],
                         ),
                     )
         # Invalid JSON is the same outcome as a missing file:
@@ -556,7 +571,12 @@ class ProviderDiscoveryTests(unittest.TestCase):
 
         broker_a = self._provider_dir(
             "broker-a",
-            {"name": "Broker A", "date_format": "%m/%d/%Y", "currency": "USD"},
+            {
+                "name": "Broker A",
+                "date_format": "%m/%d/%Y",
+                "currency": "USD",
+                "parser": "schwab_personal",
+            },
         )
         _write_csv(broker_a / "transactions.csv", HEADER, [])
         _write_csv(broker_a / "nested" / "more.csv", HEADER, [])
@@ -564,7 +584,12 @@ class ProviderDiscoveryTests(unittest.TestCase):
 
         broker_b = self._provider_dir(
             "broker-b",
-            {"name": "Broker A", "date_format": "%m/%d/%Y", "currency": "USD"},
+            {
+                "name": "Broker A",
+                "date_format": "%m/%d/%Y",
+                "currency": "USD",
+                "parser": "schwab_personal",
+            },
         )
         _write_csv(broker_b / "transactions.csv", HEADER, [])
 
@@ -581,6 +606,37 @@ class ProviderDiscoveryTests(unittest.TestCase):
         )
         # config.json itself is never returned as an input.
         self.assertNotIn("config.json", [p.path.name for p in inputs])
+
+    def test_find_inputs_ignores_files_without_a_usable_parser(self):
+        # A provider with no parser, and one naming an
+        # unknown parser: each CSV gets its own warning
+        # saying it is ignored, and nothing is collected.
+        (self.base / "input").mkdir(parents=True, exist_ok=True)
+        no_parser = self._provider_dir(
+            "no-parser",
+            {"name": "Broker A", "date_format": "%m/%d/%Y", "currency": "USD"},
+        )
+        _write_csv(no_parser / "transactions.csv", HEADER, [])
+        unknown = self._provider_dir(
+            "unknown-parser",
+            {
+                "name": "Broker B",
+                "date_format": "%m/%d/%Y",
+                "currency": "USD",
+                "parser": "nonsense",
+            },
+        )
+        _write_csv(unknown / "other.csv", HEADER, [])
+
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertIsNone(find_inputs(self.base))
+        stderr = err.getvalue()
+        self.assertIn("transactions.csv", stderr)
+        self.assertIn("no parser configured", stderr)
+        self.assertIn("other.csv", stderr)
+        self.assertIn("unknown parser 'nonsense'", stderr)
+        self.assertIn("file ignored", stderr)
 
     def test_find_inputs_returns_none_when_no_inputs(self):
         cases = [

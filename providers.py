@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from models import Currency, ProviderConfig, ProviderInput
+from parsers import known_parser
 
 CONFIG_FILENAME = "config.json"
 
@@ -56,10 +57,24 @@ def load_provider_config(provider_dir: Path) -> ProviderConfig | None:
             file=sys.stderr,
         )
         return None
+    # The parser is read here but not validated: a provider
+    # without a usable parser is not skipped, its files are
+    # ignored one by one in find_inputs, with a warning per
+    # file, so it is clear exactly what was left out.
+    parser_name = data.get("parser")
+    if parser_name is not None and not isinstance(parser_name, str):
+        print(
+            f"Warning: provider {provider_dir.name}: "
+            f"{CONFIG_FILENAME} has a non-string parser, "
+            f"its files will be ignored",
+            file=sys.stderr,
+        )
+        parser_name = None
     return ProviderConfig(
         name=name.strip(),
         date_format=date_format,
         currency=currency,
+        parser=parser_name,
     )
 
 
@@ -118,13 +133,29 @@ def find_inputs(data_dir: Path) -> list[ProviderInput] | None:
         for path in files:
             if path.name == CONFIG_FILENAME:
                 continue  # config, not data, no warning
-            if path.suffix.lower() == ".csv":
-                inputs.append(ProviderInput(path=path, provider=provider))
-            else:
+            if path.suffix.lower() != ".csv":
                 print(
                     f"Warning: {path} is not a CSV or config file, skipped",
                     file=sys.stderr,
                 )
+                continue
+            if provider.parser is None:
+                print(
+                    f"Warning: {path}: no parser configured for "
+                    f"provider {provider.name!r}, file ignored "
+                    f'(add "parser" to {CONFIG_FILENAME})',
+                    file=sys.stderr,
+                )
+                continue
+            if not known_parser(provider.parser):
+                print(
+                    f"Warning: {path}: unknown parser "
+                    f"{provider.parser!r} for provider "
+                    f"{provider.name!r}, file ignored",
+                    file=sys.stderr,
+                )
+                continue
+            inputs.append(ProviderInput(path=path, provider=provider))
 
     if not inputs:
         print(f"Error: no CSV found under {input_dir}", file=sys.stderr)

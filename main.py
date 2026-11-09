@@ -30,7 +30,7 @@ from pathlib import Path
 
 from fx import FxConverter
 from matching import PoolInsufficientError, State
-from parsing import parse_csv
+from parsers import parse_file
 from processors import dispatch
 from providers import find_inputs
 from reporting.html import (
@@ -89,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     all_parsed = []
     total_skipped = 0
     for inp in inputs:
-        events, skipped = parse_csv(inp.path, inp.provider)
+        events, skipped = parse_file(inp.path, inp.provider)
         all_parsed.extend(events)
         total_skipped += skipped
 
