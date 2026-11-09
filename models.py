@@ -12,6 +12,8 @@ class Action(Enum):
     SELL = "sell"
     STOCK_PLAN_ACTIVITY = "stock plan activity"
     WIRE_SENT = "wire sent"
+    MISC_CASH_ENTRY = "misc cash entry"
+    SERVICE_FEE = "service fee"
     DIVIDEND = "dividend"
     INTEREST = "interest"
     # Tax already withheld from income: the only tax
@@ -25,11 +27,17 @@ class Action(Enum):
 # Recognised but not CGT events, so they are dropped at
 # parsing and never reach the timeline, the FX converter,
 # or a processor. Stock plan activity is in the equity
-# file; a wire sent is cash out. They are listed here only
-# so they are recognised rather than warned about as
-# unrecognised.
+# file; a wire sent is cash out; a misc cash entry and a
+# service fee are cash movements with no tax relation.
+# They are listed here only so they are recognised rather
+# than warned about as unrecognised.
 IGNORED_ACTIONS: frozenset[Action] = frozenset(
-    {Action.STOCK_PLAN_ACTIVITY, Action.WIRE_SENT}
+    {
+        Action.STOCK_PLAN_ACTIVITY,
+        Action.WIRE_SENT,
+        Action.MISC_CASH_ENTRY,
+        Action.SERVICE_FEE,
+    }
 )
 
 

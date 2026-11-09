@@ -15,6 +15,7 @@ from parsers.common import parse_date, parse_money
 # UK tax, so both map to one Dividend action.
 _ACTION_ALIASES: dict[str, Action] = {
     "qualified dividend": Action.DIVIDEND,
+    "non-qualified div": Action.DIVIDEND,
     "pr yr non-qual div": Action.DIVIDEND,
     "nra tax adj": Action.WITHHOLDING_TAX,
     "foreign tax paid": Action.WITHHOLDING_TAX,
