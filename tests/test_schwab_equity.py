@@ -3,9 +3,11 @@
 One lapse is two physical rows: the first carries the
 date, the action, the symbol and the quantity; the second,
 with an empty date, carries the award details, including
-the fair market value price. The amount is computed, the
-tax columns are ignored. Made-up values throughout -- the
-real file's rows must never appear here.
+the fair market value price and the shares deposited. The
+amount is computed from the deposited shares, the tax
+dollars are ignored, and the withheld shares never reach
+the account. Made-up values throughout -- the real file's
+rows must never appear here.
 """
 
 import io
@@ -114,7 +116,7 @@ class EquityTests(unittest.TestCase):
         with redirect_stderr(err):
             return parse_csv(path, _provider())
 
-    def test_lapse_pair_is_a_buy_at_quantity_times_fmv(self):
+    def test_lapse_pair_is_a_buy_of_net_shares_at_fmv(self):
         header = ",".join(HEADER) + "\n"
         events, skipped = self._parse(header + _lapse_pair())
         self.assertEqual(skipped, 0)
@@ -124,34 +126,91 @@ class EquityTests(unittest.TestCase):
         self.assertEqual(event.date, date(2021, 3, 15))
         self.assertEqual(event.symbol, "ACME")
         self.assertEqual(event.description, "Restricted Stock Lapse")
-        self.assertEqual(event.quantity, 4)
+        self.assertEqual(event.quantity, 3)
         self.assertEqual(event.original_price, Decimal("41.25"))
-        self.assertEqual(event.original_amount, Decimal("165.00"))
+        self.assertEqual(event.original_amount, Decimal("123.75"))
         self.assertEqual(event.original_fees, Decimal(0))
         self.assertEqual(event.provider, "Test Equity")
         self.assertEqual(event.source_file, "lapses.csv")
         self.assertEqual(event.row, 2)
 
-    def test_tax_columns_are_ignored(self):
+    def test_withheld_shares_reduce_the_buy(self):
         # One share withheld for tax, tax paid -- the buy
-        # is still the full quantity at the fair market
-        # value: that tax is already paid via income tax.
+        # is the deposited shares only: the withheld share
+        # never reaches the account, and the tax dollars
+        # are not part of the amount.
         header = ",".join(HEADER) + "\n"
         events, skipped = self._parse(header + _lapse_pair())
         self.assertEqual(skipped, 0)
+        self.assertEqual(events[0].quantity, 3)
+        self.assertEqual(events[0].original_amount, Decimal("123.75"))
+
+    def test_reconciliation_mismatch_warns_but_keeps_the_row(self):
+        # Five vested less one withheld is four, not three:
+        # the file disagrees with itself, so it warns, but
+        # the buy is still the deposited three.
+        header = ",".join(HEADER) + "\n"
+        path = _write(self.base / "lapses.csv", header + _lapse_pair(quantity="5"))
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].quantity, 3)
+        self.assertEqual(events[0].original_amount, Decimal("123.75"))
+        self.assertIn("not NetSharesDeposited 3", err.getvalue())
+
+    def test_reconciliation_match_is_silent(self):
+        # Four vested less one withheld is three deposited:
+        # the file agrees with itself, so nothing is said.
+        header = ",".join(HEADER) + "\n"
+        path = _write(self.base / "lapses.csv", header + _lapse_pair())
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(err.getvalue(), "")
+
+    def test_unreadable_vested_quantity_skips_the_check_silently(self):
+        # The vested figure is only there for the check:
+        # when it cannot be read, the check cannot run, and
+        # the buy -- the deposited shares -- still stands.
+        header = ",".join(HEADER) + "\n"
+        path = _write(self.base / "lapses.csv", header + _lapse_pair(quantity="ten"))
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].quantity, 3)
+        self.assertEqual(err.getvalue(), "")
+
+    def test_blank_withheld_counts_as_zero_in_the_check(self):
+        # Nothing recorded as withheld means nothing was
+        # withheld: four vested, none withheld, four
+        # deposited -- the file agrees with itself.
+        header = ",".join(HEADER) + "\n"
+        pair = _lapse_pair(quantity="4", withheld="", net="4")
+        path = _write(self.base / "lapses.csv", header + pair)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 1)
         self.assertEqual(events[0].quantity, 4)
-        self.assertEqual(events[0].original_amount, Decimal("165.00"))
+        self.assertEqual(err.getvalue(), "")
 
     def test_lapse_with_fees_includes_them_in_the_amount(self):
-        # The amount is the money out: quantity times the
-        # fair market value plus the fees. The matcher uses
-        # the amount as it stands, so the fees belong in it
-        # here, not added later.
+        # The amount is the money out: the deposited shares
+        # times the fair market value plus the fees. The
+        # matcher uses the amount as it stands, so the fees
+        # belong in it here, not added later.
         header = ",".join(HEADER) + "\n"
         events, skipped = self._parse(header + _lapse_pair(fees="$1.00"))
         self.assertEqual(skipped, 0)
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].original_amount, Decimal("166.00"))
+        self.assertEqual(events[0].original_amount, Decimal("124.75"))
         self.assertEqual(events[0].original_fees, Decimal("1.00"))
 
     def test_wrapped_record_is_joined(self):
@@ -165,8 +224,8 @@ class EquityTests(unittest.TestCase):
         events, skipped = self._parse(header + first + "\n" + second + "\n")
         self.assertEqual(skipped, 0)
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].quantity, 4)
-        self.assertEqual(events[0].original_amount, Decimal("165.00"))
+        self.assertEqual(events[0].quantity, 3)
+        self.assertEqual(events[0].original_amount, Decimal("123.75"))
 
     def test_joined_record_with_too_many_columns_raises(self):
         # A short line joined with a full detail line
@@ -266,23 +325,25 @@ class EquityTests(unittest.TestCase):
         self.assertEqual(events, [])
         self.assertEqual(skipped, 1)
 
-    def test_fractional_zero_and_unparseable_quantities_are_skipped(self):
+    def test_fractional_zero_and_unparseable_net_shares_are_skipped(self):
         header = ",".join(HEADER) + "\n"
-        for label, quantity in [
+        for label, net in [
             ("fractional", "2.5"),
             ("zero", "0"),
+            ("blank", ""),
             ("not a number", "ten"),
         ]:
             with self.subTest(label=label):
-                events, skipped = self._parse(header + _lapse_pair(quantity=quantity))
+                events, skipped = self._parse(header + _lapse_pair(net=net))
                 self.assertEqual(events, [])
                 self.assertEqual(skipped, 1)
 
-    def test_quantity_with_thousands_separator_parses(self):
+    def test_net_shares_with_thousands_separator_parses(self):
         # Schwab writes large quantities with a thousands
         # separator: "1,000" is a thousand units.
         header = ",".join(HEADER) + "\n"
-        events, skipped = self._parse(header + _lapse_pair(quantity='"1,000"'))
+        pair = _lapse_pair(quantity='"1,000"', withheld="0", net='"1,000"')
+        events, skipped = self._parse(header + pair)
         self.assertEqual(skipped, 0)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].quantity, 1000)

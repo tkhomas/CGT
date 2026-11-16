@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import csv
 import sys
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 
 from models import IGNORED_ACTIONS, INCOME_ACTIONS, Action, ParsedEvent, ProviderConfig
-from parsers.common import parse_date, parse_money
+from parsers.common import parse_date, parse_int, parse_money
 
 # Schwab names for the same canonical action. Qualified
 # versus non-qualified is a US distinction, immaterial for
@@ -84,28 +84,14 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], 
                 )
                 continue
 
-            # Schwab writes large quantities with a thousands
-            # separator, as it does amounts. Anything that is
-            # still not a number is a bad row, warned about
-            # and skipped like the other bad rows, not a
-            # reason to kill the whole run.
+            # A quantity that is not a whole number is a bad
+            # row, warned about and skipped like the other
+            # bad rows, not a reason to kill the whole run.
             try:
-                quantity_decimal = Decimal(
-                    (row["Quantity"] or "0").replace(",", "").strip()
-                )
-            except InvalidOperation:
+                quantity = parse_int(row["Quantity"], "Quantity")
+            except ValueError as exc:
                 print(
-                    f"Warning: {path.name}:{reader.line_num}: "
-                    f"Quantity {row.get('Quantity')!r} is not a number, skipped",
-                    file=sys.stderr,
-                )
-                skipped += 1
-                continue
-            if quantity_decimal != quantity_decimal.to_integral_value():
-                print(
-                    f"Warning: {path.name}:{reader.line_num}: "
-                    f"fractional Quantity {quantity_decimal} "
-                    f"not supported for this provider, skipped",
+                    f"Warning: {path.name}:{reader.line_num}: {exc}, skipped",
                     file=sys.stderr,
                 )
                 skipped += 1
@@ -121,11 +107,10 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], 
             # written. Price, quantity and fees are only a
             # check that the row adds up, never the value.
             amount = abs(parse_money(row["Amount"]))
-            quantity = int(quantity_decimal)
-            if quantity_decimal <= 0:
+            if quantity <= 0:
                 print(
                     f"Warning: {path.name}:{reader.line_num}: "
-                    f"quantity {quantity_decimal} not positive, skipped",
+                    f"quantity {quantity} not positive, skipped",
                     file=sys.stderr,
                 )
                 skipped += 1

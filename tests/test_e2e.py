@@ -165,9 +165,9 @@ class EndToEndTests(unittest.TestCase):
         for label, total in [
             ("2019-20", "£100.00"),
             ("2020-21", "£0.00"),
-            ("2024-25", "£209.33"),
-            ("2025-26", "£163.71"),
-            ("2026-27_CURRENT", "£147.35"),
+            ("2024-25", "£209.22"),
+            ("2025-26", "£163.60"),
+            ("2026-27_CURRENT", "£147.09"),
         ]:
             with self.subTest(label=label):
                 html = self._read(f"disposals-{label}.html")
@@ -226,7 +226,7 @@ class EndToEndTests(unittest.TestCase):
     def test_holdings_at_5_april_2026(self) -> None:
         html = self._read("portfolio-2025-26.html")
         for row in [
-            "<td>ACME</td><td class='num'>8</td><td class='num'>£325.14</td>",
+            "<td>ACME</td><td class='num'>7</td><td class='num'>£284.86</td>",
             "<td>CROSS</td><td class='num'>10</td><td class='num'>£300.10</td>",
             "<td>EDGE</td><td class='num'>5</td><td class='num'>£75.02</td>",
             "<td>WIDG</td><td class='num'>20</td><td class='num'>£261.25</td>",

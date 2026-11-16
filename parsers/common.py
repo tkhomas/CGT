@@ -9,7 +9,7 @@ file -- lives in that format's own module.
 from __future__ import annotations
 
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 
 def parse_date(text: str, date_format: str) -> date:
@@ -36,3 +36,24 @@ def parse_money(text: str | None) -> Decimal:
     for symbol in ("$", "£", "€", "¥", "₹"):
         cleaned = cleaned.replace(symbol, "")
     return Decimal(cleaned.replace(",", "").strip())
+
+
+def parse_int(text: str | None, field: str) -> int:
+    """Parse a whole number of shares from a field that holds one.
+
+    Strips thousands separators. A blank field parses as 0:
+    the caller decides whether 0 is allowed. Anything that
+    is not a whole number raises ValueError naming the field
+    and the problem, so the caller can warn about the row
+    or treat it as unreadable.
+    """
+    raw = text if text is not None else ""
+    try:
+        value = Decimal(raw.replace(",", "").strip() or "0")
+    except InvalidOperation:
+        raise ValueError(f"{field} {text!r} is not a number") from None
+    if value != value.to_integral_value():
+        raise ValueError(
+            f"fractional {field} {value} not supported for this provider"
+        ) from None
+    return int(value)

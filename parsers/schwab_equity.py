@@ -3,12 +3,17 @@
 One lapse is two physical rows: the first carries the
 date, the action, the symbol and the quantity vested; the
 following row, with an empty date, carries the award
-details, including the fair market value price. The amount
-is not in the file: it is quantity times that price, plus
-the fees, so a lapse is exactly a buy of that many shares
-at that price. Everything about tax -- the tax withheld,
-the shares sold or withheld for it -- is ignored: that tax
-is already paid through income tax.
+details, including the fair market value price and the
+shares actually deposited. The amount is not in the file:
+it is the deposited shares times that price, plus the
+fees, so a lapse is exactly a buy of that many shares at
+that price. The shares sold or withheld for tax never
+reach the account -- that tax is settled through payroll,
+not here -- so they are out of the picture entirely, and
+the tax dollars are ignored too. The file should agree
+with itself: the vested shares less the withheld shares
+are the deposited shares, and a row where they do not
+agree warns.
 """
 
 from __future__ import annotations
@@ -16,11 +21,10 @@ from __future__ import annotations
 import csv
 import io
 import sys
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from models import Action, ParsedEvent, ProviderConfig
-from parsers.common import parse_date, parse_money
+from parsers.common import parse_date, parse_int, parse_money
 
 _ACTION: dict[str, Action] = {"lapse": Action.BUY}
 
@@ -93,41 +97,9 @@ def _make_event(
         )
         return None
 
-    # Schwab writes large quantities with a thousands
-    # separator, as it does amounts. Anything that is still
-    # not a number is a bad row, warned about and skipped
-    # like the other bad rows, not a reason to kill the
-    # whole run.
-    try:
-        quantity_decimal = Decimal(
-            (header_row.get("Quantity") or "0").replace(",", "").strip()
-        )
-    except InvalidOperation:
-        print(
-            f"Warning: {path.name}:{line_no}: "
-            f"Quantity {header_row.get('Quantity')!r} is not a number, skipped",
-            file=sys.stderr,
-        )
-        return None
-    if quantity_decimal != quantity_decimal.to_integral_value():
-        print(
-            f"Warning: {path.name}:{line_no}: "
-            f"fractional Quantity {quantity_decimal} "
-            f"not supported for this provider, skipped",
-            file=sys.stderr,
-        )
-        return None
-    quantity = int(quantity_decimal)
-    if quantity <= 0:
-        print(
-            f"Warning: {path.name}:{line_no}: "
-            f"quantity {quantity_decimal} not positive, skipped",
-            file=sys.stderr,
-        )
-        return None
-
-    # The price lives on the detail row; a lapse whose own
-    # row already carries it is complete as it stands.
+    # The price and the deposited shares live on the
+    # detail row; a lapse whose own row already carries
+    # them is complete as it stands.
     price_row = detail_row if detail_row is not None else header_row
     price = parse_money(price_row.get("FairMarketValuePrice"))
     if price <= 0:
@@ -137,9 +109,57 @@ def _make_event(
         )
         return None
 
-    # The amount is the money out: the shares at fair market
-    # value plus the fees. The matcher uses the amount as it
-    # stands, so the fees belong in it here, not added later.
+    # The buy is the shares that actually reach the
+    # account, not the shares that vested: the shares sold
+    # or withheld for tax are settled through payroll and
+    # never land here. A figure that is not a whole number
+    # is a bad row, warned about and skipped like the
+    # other bad rows, not a reason to kill the whole run.
+    try:
+        quantity = parse_int(price_row.get("NetSharesDeposited"), "NetSharesDeposited")
+    except ValueError as exc:
+        print(
+            f"Warning: {path.name}:{line_no}: {exc}, skipped",
+            file=sys.stderr,
+        )
+        return None
+    if quantity <= 0:
+        print(
+            f"Warning: {path.name}:{line_no}: "
+            f"NetSharesDeposited {quantity} not positive, skipped",
+            file=sys.stderr,
+        )
+        return None
+
+    # The file should agree with itself: the vested shares
+    # less the shares sold or withheld for tax are the
+    # deposited shares. If it does not, warn, but keep the
+    # row -- the deposited figure is what the account
+    # holds, so it is the one the buy is built on. A
+    # figure that cannot be read means the check cannot
+    # run, not that the row is bad.
+    try:
+        vested = parse_int(header_row.get("Quantity"), "Quantity")
+        withheld = parse_int(
+            price_row.get("SharesSoldWithheldForTaxes"),
+            "SharesSoldWithheldForTaxes",
+        )
+    except ValueError:
+        vested = None
+        withheld = None
+    if vested is not None and withheld is not None and vested - withheld != quantity:
+        print(
+            f"Warning: {path.name}:{line_no}: "
+            f"Quantity {vested} less {withheld} withheld "
+            f"is {vested - withheld}, not NetSharesDeposited "
+            f"{quantity} -- kept the deposited figure",
+            file=sys.stderr,
+        )
+
+    # The amount is the money out: the deposited shares at
+    # fair market value plus the fees. The matcher uses the
+    # amount as it stands, so the fees belong in it here,
+    # not added later.
     fees = parse_money(header_row.get("FeesAndCommissions"))
     return ParsedEvent(
         date=parse_date(header_row["Date"], provider.date_format),
