@@ -5,7 +5,7 @@ date, the action, the symbol and the quantity; the second,
 with an empty date, carries the award details, including
 the fair market value price. The amount is computed, the
 tax columns are ignored. Made-up values throughout -- the
-real file's META rows must never appear here.
+real file's rows must never appear here.
 """
 
 import io

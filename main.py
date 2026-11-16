@@ -4,6 +4,10 @@
 Layout, with --data-dir defaulting to "data":
   <data-dir>/input/<provider>/config.json   required per provider
   <data-dir>/input/<provider>/...           CSVs, any layout, recursive
+  <data-dir>/input/aliases.json             optional: symbol aliases,
+                                            canonical name to the spellings
+                                            seen in files, e.g.
+                                            {"ACME": ["ACME", "ACMX"]}
   <data-dir>/output/                        reports, one pair per tax year
   <data-dir>/output/portfolio-<year>.html   portfolio report for a tax year
   <data-dir>/output/disposals-<year>.html   disposals report for a tax year
@@ -28,6 +32,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from aliases import canonicalise_events, load_aliases
 from fx import FxConverter
 from matching import PoolInsufficientError, State
 from parsers import parse_file
@@ -86,12 +91,28 @@ def main(argv: list[str] | None = None) -> int:
     if inputs is None:
         return 2
 
+    # A missing aliases file is no aliases, not an error;
+    # a malformed one fails the run before any parsing.
+    try:
+        aliases = load_aliases(data_dir / "input" / "aliases.json")
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    except TypeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
     all_parsed = []
     total_skipped = 0
     for inp in inputs:
         events, skipped = parse_file(inp.path, inp.provider)
         all_parsed.extend(events)
         total_skipped += skipped
+
+    # A rename is not a disposal: spellings of one holding
+    # become its canonical name before FX, the timeline,
+    # and matching ever see them.
+    all_parsed = canonicalise_events(all_parsed, aliases)
 
     user_path = data_dir / "fx" / "user-provided.json"
     try:
