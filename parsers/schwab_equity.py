@@ -13,7 +13,12 @@ not here -- so they are out of the picture entirely, and
 the tax dollars are ignored too. The file should agree
 with itself: the vested shares less the withheld shares
 are the deposited shares, and a row where they do not
-agree warns.
+agree warns. The events come out in the order they
+happened: the file order is checked, not assumed --
+chronological files are kept as they are, newest-first
+files are reversed, and a file that runs neither way is
+sorted by date, with a warning (see order_events in
+parsers/common.py).
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ import sys
 from pathlib import Path
 
 from models import Action, ParsedEvent, ProviderConfig
-from parsers.common import parse_date, parse_int, parse_money
+from parsers.common import order_events, parse_date, parse_int, parse_money
 
 _ACTION: dict[str, Action] = {"lapse": Action.BUY}
 
@@ -230,4 +235,10 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], 
             file=sys.stderr,
         )
         skipped += 1
-    return events, skipped
+    # The file order is checked, not assumed: chronological
+    # files are kept, newest-first files are reversed, and
+    # a file that runs neither way is sorted by date, with
+    # a warning. The timeline takes input order as the order
+    # the events happened, so the events come out oldest
+    # first.
+    return order_events(events, path.name), skipped

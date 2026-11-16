@@ -1,4 +1,11 @@
-"""Schwab personal brokerage transactions CSV: one row per event, into ParsedEvents."""
+"""Schwab personal brokerage transactions CSV: one row per event, into ParsedEvents.
+
+The events come out in the order they happened: the file
+order is checked, not assumed -- chronological files are
+kept as they are, newest-first files are reversed, and a
+file that runs neither way is sorted by date, with a
+warning (see order_events in parsers/common.py).
+"""
 
 from __future__ import annotations
 
@@ -8,7 +15,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from models import IGNORED_ACTIONS, INCOME_ACTIONS, Action, ParsedEvent, ProviderConfig
-from parsers.common import parse_date, parse_int, parse_money
+from parsers.common import order_events, parse_date, parse_int, parse_money
 
 # Schwab names for the same canonical action. Qualified
 # versus non-qualified is a US distinction, immaterial for
@@ -155,4 +162,10 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], 
                     row=reader.line_num,
                 )
             )
-    return events, skipped
+    # The file order is checked, not assumed: chronological
+    # files are kept, newest-first files are reversed, and
+    # a file that runs neither way is sorted by date, with
+    # a warning. The timeline takes input order as the order
+    # the events happened, so the events come out oldest
+    # first.
+    return order_events(events, path.name), skipped

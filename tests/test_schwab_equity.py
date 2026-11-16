@@ -134,6 +134,77 @@ class EquityTests(unittest.TestCase):
         self.assertEqual(event.source_file, "lapses.csv")
         self.assertEqual(event.row, 2)
 
+    def test_lapses_come_out_oldest_first(self):
+        # The file is newest first, as Schwab exports it:
+        # the April lapse is on the first pair, the January
+        # lapse on the second. The events come out in the
+        # order they happened.
+        header = ",".join(HEADER) + "\n"
+        later = _lapse_pair(
+            lapse_date="04/16/2025",
+            quantity="3",
+            award_date="08/01/2024",
+            award_id="887103",
+            fmv="$53.00",
+            withheld="0",
+            net="3",
+            taxes="$0.00",
+        )
+        earlier = _lapse_pair(
+            lapse_date="01/10/2025",
+            quantity="10",
+            award_date="06/03/2024",
+            award_id="887101",
+            fmv="$50.00",
+            withheld="0",
+            net="10",
+            taxes="$0.00",
+        )
+        events, skipped = self._parse(header + later + earlier)
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 2)
+        first, second = events
+        self.assertEqual(first.date, date(2025, 1, 10))
+        self.assertEqual(first.quantity, 10)
+        self.assertEqual(first.original_amount, Decimal("500.00"))
+        self.assertEqual(second.date, date(2025, 4, 16))
+        self.assertEqual(second.quantity, 3)
+        self.assertEqual(second.original_amount, Decimal("159.00"))
+
+    def test_lapses_in_chronological_order_are_kept(self):
+        # The file order is checked, not assumed: a file
+        # whose lapses already run oldest first is kept as
+        # it is, not reversed.
+        header = ",".join(HEADER) + "\n"
+        earlier = _lapse_pair(
+            lapse_date="01/10/2025",
+            quantity="10",
+            award_date="06/03/2024",
+            award_id="887101",
+            fmv="$50.00",
+            withheld="0",
+            net="10",
+            taxes="$0.00",
+        )
+        later = _lapse_pair(
+            lapse_date="04/16/2025",
+            quantity="3",
+            award_date="08/01/2024",
+            award_id="887103",
+            fmv="$53.00",
+            withheld="0",
+            net="3",
+            taxes="$0.00",
+        )
+        events, skipped = self._parse(header + earlier + later)
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 2)
+        first, second = events
+        self.assertEqual(first.date, date(2025, 1, 10))
+        self.assertEqual(first.quantity, 10)
+        self.assertEqual(second.date, date(2025, 4, 16))
+        self.assertEqual(second.quantity, 3)
+
     def test_withheld_shares_reduce_the_buy(self):
         # One share withheld for tax, tax paid -- the buy
         # is the deposited shares only: the withheld share

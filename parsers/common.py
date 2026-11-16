@@ -8,8 +8,11 @@ file -- lives in that format's own module.
 
 from __future__ import annotations
 
+import sys
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+
+from models import ParsedEvent
 
 
 def parse_date(text: str, date_format: str) -> date:
@@ -57,3 +60,45 @@ def parse_int(text: str | None, field: str) -> int:
             f"fractional {field} {value} not supported for this provider"
         ) from None
     return int(value)
+
+
+def order_events(events: list[ParsedEvent], source_file: str) -> list[ParsedEvent]:
+    """Put a file's events in the order they happened.
+
+    The file order is checked, not assumed. A file whose
+    dates run oldest first is chronological and is kept as
+    it is; a file whose dates run newest first is reversed.
+    A file with more than one date that runs neither way
+    has no order to trust: the events are sorted by date,
+    and the warning says so -- within a single day the
+    order is then as written in the file, which may not be
+    the order the events happened. A file that is all one
+    date cannot be checked at all: the events are taken in
+    file order, as if chronological, and the warning says
+    so. A single event has no order to determine.
+    """
+    if len(events) < 2:
+        return events
+    dates = [event.date for event in events]
+    if all(d == dates[0] for d in dates):
+        print(
+            f"Warning: {source_file}: all {len(events)} events are on "
+            f"{dates[0].isoformat()}, so the file order cannot be "
+            "checked against the dates -- the events are taken in "
+            "file order, as if chronological.",
+            file=sys.stderr,
+        )
+        return events
+    if all(dates[i] <= dates[i + 1] for i in range(len(dates) - 1)):
+        return events
+    if all(dates[i] >= dates[i + 1] for i in range(len(dates) - 1)):
+        return list(reversed(events))
+    print(
+        f"Warning: {source_file}: events are not in date order -- "
+        "neither chronological nor reverse chronological.\n"
+        "    Events have been sorted by date, but within a single day "
+        "the order is as written in the file and may not be the order "
+        "they happened, so same-day matching may be wrong.",
+        file=sys.stderr,
+    )
+    return sorted(events, key=lambda event: event.date)

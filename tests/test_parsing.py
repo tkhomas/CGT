@@ -158,20 +158,14 @@ class ParseCsvTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_parse_csv_reads_buy_and_sell_rows(self):
+        # Rows are newest first, as Schwab exports them:
+        # the February sell is on the first data row, the
+        # January buy on the second. The events come out
+        # oldest first.
         path = _write_csv(
             self.dir / "transactions.csv",
             HEADER,
             [
-                [
-                    "01/15/2025",
-                    "Buy",
-                    " ACME ",
-                    "Buy ACME",
-                    "10",
-                    "$50.00",
-                    "-$501.00",
-                    "$1.00",
-                ],
                 [
                     "02/01/2025",
                     "Sell",
@@ -181,6 +175,16 @@ class ParseCsvTests(unittest.TestCase):
                     "$60.00",
                     "$478.50",
                     "$1.50",
+                ],
+                [
+                    "01/15/2025",
+                    "Buy",
+                    " ACME ",
+                    "Buy ACME",
+                    "10",
+                    "$50.00",
+                    "-$501.00",
+                    "$1.00",
                 ],
             ],
         )
@@ -200,7 +204,7 @@ class ParseCsvTests(unittest.TestCase):
         self.assertEqual(buy.original_fees, Decimal("1.00"))
         self.assertEqual(buy.provider, "Test Broker")
         self.assertEqual(buy.source_file, "transactions.csv")
-        self.assertEqual(buy.row, 2)
+        self.assertEqual(buy.row, 3)
 
         self.assertEqual(sell.date, date(2025, 2, 1))
         self.assertEqual(sell.action, Action.SELL)
@@ -208,7 +212,200 @@ class ParseCsvTests(unittest.TestCase):
         self.assertEqual(sell.original_price, Decimal("60.00"))
         self.assertEqual(sell.original_amount, Decimal("478.50"))
         self.assertEqual(sell.original_fees, Decimal("1.50"))
-        self.assertEqual(sell.row, 3)
+        self.assertEqual(sell.row, 2)
+
+    def test_parse_csv_reverses_newest_first_file_order(self):
+        # Schwab exports newest first, so two sells on one
+        # day reach the parser in the reverse of the order
+        # they happened: the $61.20 sell is on the first
+        # row, the $60.95 sell on the second, but the
+        # $60.95 sell happened first. The order is checked
+        # against the dates, not assumed: the interest row
+        # on 05/12, after the two 05/14 sells, is what shows
+        # the file runs newest first. The events come out
+        # in the order they happened, which is the order
+        # the timeline's tie-breaker assumes.
+        path = _write_csv(
+            self.dir / "transactions.csv",
+            HEADER,
+            [
+                [
+                    "05/14/2021",
+                    "Sell",
+                    "ACME",
+                    "Sell ACME",
+                    "10",
+                    "$61.20",
+                    "$609.90",
+                    "$2.10",
+                ],
+                [
+                    "05/14/2021",
+                    "Sell",
+                    "ACME",
+                    "Sell ACME",
+                    "10",
+                    "$60.95",
+                    "$607.15",
+                    "$2.35",
+                ],
+                [
+                    "05/12/2021",
+                    "Credit Interest",
+                    "",
+                    "BROKER INT 04/13-05/12",
+                    "",
+                    "",
+                    "$4.10",
+                    "",
+                ],
+            ],
+        )
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 3)
+        _, first, second = events
+        self.assertEqual(first.original_price, Decimal("60.95"))
+        self.assertEqual(first.original_amount, Decimal("607.15"))
+        self.assertEqual(second.original_price, Decimal("61.20"))
+        self.assertEqual(second.original_amount, Decimal("609.90"))
+
+    def test_parse_csv_keeps_chronological_file_order(self):
+        # A file whose dates run oldest first is already in
+        # the order the events happened: it is kept as it
+        # is, not reversed, and there is no warning.
+        path = _write_csv(
+            self.dir / "transactions.csv",
+            HEADER,
+            [
+                [
+                    "01/15/2025",
+                    "Buy",
+                    "ACME",
+                    "buy",
+                    "10",
+                    "$50.00",
+                    "-$501.00",
+                    "$1.00",
+                ],
+                [
+                    "02/01/2025",
+                    "Sell",
+                    "ACME",
+                    "sell",
+                    "8",
+                    "$60.00",
+                    "$478.50",
+                    "$1.50",
+                ],
+            ],
+        )
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 2)
+        buy, sell = events
+        self.assertEqual(buy.date, date(2025, 1, 15))
+        self.assertEqual(sell.date, date(2025, 2, 1))
+
+    def test_parse_csv_sorts_events_when_the_file_has_no_order(self):
+        # Dates that run neither oldest first nor newest
+        # first have no order to trust: the events are
+        # sorted by date, and the warning says the order
+        # within a single day is as written in the file.
+        path = _write_csv(
+            self.dir / "transactions.csv",
+            HEADER,
+            [
+                [
+                    "02/01/2025",
+                    "Buy",
+                    "ACME",
+                    "buy",
+                    "10",
+                    "$50.00",
+                    "-$501.00",
+                    "$1.00",
+                ],
+                [
+                    "01/15/2025",
+                    "Sell",
+                    "ACME",
+                    "sell",
+                    "8",
+                    "$60.00",
+                    "$478.50",
+                    "$1.50",
+                ],
+                [
+                    "03/01/2025",
+                    "Buy",
+                    "ACME",
+                    "buy",
+                    "5",
+                    "$55.00",
+                    "-$275.00",
+                    "$0.00",
+                ],
+            ],
+        )
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertIn("not in date order", err.getvalue())
+        self.assertIn("same-day matching may be wrong", err.getvalue())
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 3)
+        self.assertEqual(
+            [event.date for event in events],
+            [date(2025, 1, 15), date(2025, 2, 1), date(2025, 3, 1)],
+        )
+
+    def test_parse_csv_single_date_file_is_taken_in_file_order(self):
+        # A file that is all one date cannot be checked
+        # against the dates at all: the events are taken in
+        # file order, as if chronological, and the warning
+        # says the order is unresolved.
+        path = _write_csv(
+            self.dir / "transactions.csv",
+            HEADER,
+            [
+                [
+                    "05/14/2021",
+                    "Sell",
+                    "ACME",
+                    "Sell ACME",
+                    "10",
+                    "$61.20",
+                    "$609.90",
+                    "$2.10",
+                ],
+                [
+                    "05/14/2021",
+                    "Sell",
+                    "ACME",
+                    "Sell ACME",
+                    "10",
+                    "$60.95",
+                    "$607.15",
+                    "$2.35",
+                ],
+            ],
+        )
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertIn("all 2 events are on 2021-05-14", err.getvalue())
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 2)
+        first, second = events
+        self.assertEqual(first.original_price, Decimal("61.20"))
+        self.assertEqual(second.original_price, Decimal("60.95"))
 
     def test_parse_csv_skips_bad_rows_but_keeps_good_ones(self):
         # Fractional quantity, non-positive quantity, a
@@ -335,16 +532,6 @@ class ParseCsvTests(unittest.TestCase):
             HEADER,
             [
                 [
-                    "01/15/2025",
-                    "Buy",
-                    "ACME",
-                    "buy",
-                    "10",
-                    "$50.00",
-                    "-$500.00",
-                    "$0.00",
-                ],
-                [
                     "01/16/2025",
                     "Sell",
                     "ACME",
@@ -352,6 +539,16 @@ class ParseCsvTests(unittest.TestCase):
                     "8",
                     "$60.00",
                     "-$480.00",
+                    "$0.00",
+                ],
+                [
+                    "01/15/2025",
+                    "Buy",
+                    "ACME",
+                    "buy",
+                    "10",
+                    "$50.00",
+                    "-$500.00",
                     "$0.00",
                 ],
             ],
@@ -379,16 +576,6 @@ class ParseCsvTests(unittest.TestCase):
             HEADER,
             [
                 [
-                    "01/15/2025",
-                    "Buy",
-                    "ACME",
-                    "buy",
-                    "10",
-                    "$50.00",
-                    "-$501.00",
-                    "$1.00",
-                ],
-                [
                     "01/16/2025",
                     "Sell",
                     "ACME",
@@ -397,6 +584,16 @@ class ParseCsvTests(unittest.TestCase):
                     "$60.00",
                     "$478.50",
                     "$1.50",
+                ],
+                [
+                    "01/15/2025",
+                    "Buy",
+                    "ACME",
+                    "buy",
+                    "10",
+                    "$50.00",
+                    "-$501.00",
+                    "$1.00",
                 ],
             ],
         )
@@ -567,18 +764,20 @@ class ParseCsvTests(unittest.TestCase):
         # dividend is still just a dividend here; its tax
         # year is decided by its payment date. A normal
         # Buy in the same file still parses as usual.
+        # Rows are newest first, as Schwab exports them.
+        # The events come out oldest first.
         path = _write_csv(
             self.dir / "transactions.csv",
             HEADER,
             [
                 [
-                    "09/11/2026",
-                    "Qualified Dividend",
-                    "ACME",
-                    "ACME HOLDINGS INC",
+                    "09/30/2026",
+                    "Credit Interest",
+                    "",
+                    "BROKER INT 09/01-09/30",
                     "",
                     "",
-                    "$40.00",
+                    "$2.50",
                     "",
                 ],
                 [
@@ -592,14 +791,24 @@ class ParseCsvTests(unittest.TestCase):
                     "",
                 ],
                 [
-                    "09/30/2026",
-                    "Credit Interest",
+                    "09/11/2026",
+                    "Qualified Dividend",
+                    "ACME",
+                    "ACME HOLDINGS INC",
                     "",
-                    "BROKER INT 09/01-09/30",
                     "",
+                    "$40.00",
                     "",
-                    "$2.50",
-                    "",
+                ],
+                [
+                    "09/05/2026",
+                    "Buy",
+                    "ACME",
+                    "Buy ACME",
+                    "10",
+                    "$50.00",
+                    "$500.00",
+                    "$0.00",
                 ],
                 [
                     "06/20/2026",
@@ -613,16 +822,6 @@ class ParseCsvTests(unittest.TestCase):
                 ],
                 [
                     "01/20/2026",
-                    "Pr Yr Non-Qual Div",
-                    "GLOB",
-                    "GLOB HOLDINGS INC",
-                    "",
-                    "",
-                    "$18.00",
-                    "",
-                ],
-                [
-                    "01/20/2026",
                     "Pr Yr NRA Tax",
                     "GLOB",
                     "GLOB HOLDINGS INC",
@@ -632,14 +831,14 @@ class ParseCsvTests(unittest.TestCase):
                     "",
                 ],
                 [
-                    "09/05/2026",
-                    "Buy",
-                    "ACME",
-                    "Buy ACME",
-                    "10",
-                    "$50.00",
-                    "$500.00",
-                    "$0.00",
+                    "01/20/2026",
+                    "Pr Yr Non-Qual Div",
+                    "GLOB",
+                    "GLOB HOLDINGS INC",
+                    "",
+                    "",
+                    "$18.00",
+                    "",
                 ],
             ],
         )
@@ -650,7 +849,7 @@ class ParseCsvTests(unittest.TestCase):
         self.assertEqual(skipped, 0)
         self.assertEqual(len(events), 7)
 
-        dividend, tax, credit, bond, prior, prior_tax, buy = events
+        prior, prior_tax, bond, buy, dividend, tax, credit = events
         self.assertEqual(dividend.action, Action.DIVIDEND)
         self.assertEqual(dividend.date, date(2026, 9, 11))
         self.assertEqual(dividend.symbol, "ACME")
