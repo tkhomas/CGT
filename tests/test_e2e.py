@@ -211,6 +211,18 @@ class EndToEndTests(unittest.TestCase):
                         f"<th>{heading}</th><td class='num'>{total}</td>", html
                     )
 
+    def test_income_table_shows_original_amount(self) -> None:
+        # The gross dividend is $20.00 and the tax on it
+        # -$3.00: the original amounts are shown alongside
+        # the GBP ones, as in the events table. There is no
+        # original price for income: a dividend has no price,
+        # the amount is the value.
+        html = self._read("dividends-interest-2024-25.html")
+        income = html.split("<h2>Income in 2024/25</h2>", 1)[1]
+        self.assertIn("<th>Original amount</th>", income)
+        self.assertIn("20.00 USD", income)
+        self.assertIn("-3.00 USD", income)
+
     def test_dividends_report_has_no_internal_file_names(self) -> None:
         html = self._read("dividends-interest-2025-26.html")
         self.assertIn("No local file names are included.", html)
@@ -232,6 +244,96 @@ class EndToEndTests(unittest.TestCase):
             "<td>WIDG</td><td class='num'>20</td><td class='num'>£261.25</td>",
         ]:
             self.assertIn(row, html)
+
+    def test_events_table_shows_fees(self) -> None:
+        # The fees are the reason quantity times price is
+        # not the amount: the broker's amount is net of
+        # them. The 1 Feb 2025 ACME sell is 8 at $60.00
+        # with $1.50 fees, so $478.50, not $480.00; in GBP
+        # the fees are $1.50 at the Feb 2025 rate of
+        # 1.2357, so £1.21.
+        html = self._read("disposals-2024-25.html")
+        events = html.split("<h2>Buy and sell events</h2>", 1)[1]
+        self.assertIn("<th>Original fees</th>", events)
+        self.assertIn("<th>GBP fees</th>", events)
+        rows = events.split("<tr>")
+        sell_row = next(row for row in rows if "<td>2025-02-01</td>" in row)
+        self.assertIn("1.50 USD", sell_row)
+        self.assertIn("£1.21", sell_row)
+
+    def test_events_table_marks_tax_year_start(self) -> None:
+        # The 2025/26 events table accumulates years of
+        # history, so a separator marks where the year
+        # itself starts: between the 5 April 2025 sell and
+        # the 7 April 2025 buy.
+        for name in ("disposals-2025-26.html", "portfolio-2025-26.html"):
+            with self.subTest(report=name):
+                html = self._read(name)
+                events = html.split("<h2>Buy and sell events</h2>", 1)[1]
+                self.assertIn("Tax year 2025/26 starts — 6 April 2025", events)
+                self.assertLess(
+                    events.index("<td>2025-04-05</td>"),
+                    events.index("Tax year 2025/26 starts"),
+                )
+                self.assertLess(
+                    events.index("Tax year 2025/26 starts"),
+                    events.index("<td>2025-04-07</td>"),
+                )
+        # A year whose events all fall inside it has no
+        # separator: the 2018/19 table starts in the year.
+        html = self._read("portfolio-2018-19.html")
+        self.assertNotIn("Tax year 2018/19 starts", html)
+
+    def test_events_table_has_no_income(self) -> None:
+        # Income lives in the dividends-and-interest report
+        # only: dividends, interest and withholding tax do
+        # not belong among the buys and sells. The 2025/26
+        # events still hold the trades around them, so the
+        # filter did not drop anything else.
+        for name in ("disposals-2025-26.html", "portfolio-2025-26.html"):
+            with self.subTest(report=name):
+                html = self._read(name)
+                self.assertIn("<h2>Buy and sell events</h2>", html)
+                events = html.split("<h2>Buy and sell events</h2>", 1)[1]
+                for action in (
+                    "dividend",
+                    "interest",
+                    "withholding tax",
+                ):
+                    self.assertNotIn(f"<td>{action}</td>", events)
+                self.assertIn("<td>2025-04-07</td>", events)
+                self.assertIn("<td>2025-04-16</td>", events)
+
+    def test_zero_fees_are_blank_not_zero(self) -> None:
+        # The 5 April 2026 CROSS sell is 10 at $50.00 with
+        # no fees, so $500.00: both fee cells are blank,
+        # and no zero is printed anywhere in the row.
+        html = self._read("disposals-2026-27_CURRENT.html")
+        events = html.split("<h2>Buy and sell events</h2>", 1)[1]
+        rows = events.split("<tr>")
+        sell_row = next(
+            row
+            for row in rows
+            if "<td>2026-04-05</td>" in row and "<td>CROSS</td>" in row
+        )
+        self.assertIn("500.00 USD", sell_row)
+        self.assertIn("£374.22", sell_row)
+        self.assertEqual(sell_row.count("<td class='num'></td>"), 2)
+        self.assertNotIn("£0.00", sell_row)
+
+    def test_future_buys_note_is_rendered(self) -> None:
+        # The 2024/25 disposals are matched by buys after
+        # the year end (7 and 15 April 2025), so both
+        # reports carry the note explaining those buys are
+        # audit-only. And the placeholder itself must never
+        # leak into the output as literal text.
+        for name in ("portfolio-2024-25.html", "disposals-2024-25.html"):
+            with self.subTest(report=name):
+                html = self._read(name)
+                self.assertIn("Buys after year end", html)
+        for path in sorted(self.output_dir.glob("*.html")):
+            with self.subTest(report=path.name):
+                self.assertNotIn("{future_note}", path.read_text(encoding="utf-8"))
 
     def test_disposals_report_has_no_internal_file_names(self) -> None:
         html = self._read("disposals-2025-26.html")

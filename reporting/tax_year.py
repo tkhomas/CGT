@@ -95,12 +95,15 @@ def disposals_for_year(disposals: list[Disposal], tax_year: TaxYear) -> list[Dis
 def events_for_year(
     timeline: list[Event], year_disposals: list[Disposal], tax_year: TaxYear
 ) -> tuple[list[Event], bool]:
-    # All events up to year end, accumulating from the start,
-    # plus any buy after year end that matches a disposal in
-    # this year. Those buys are shown for audit only: they
-    # justify the matching, they are not counted in holdings.
-    # Timeline order is already chronological, filtering
-    # preserves it, so no re-sort is needed.
+    # Buy and sell events up to year end, accumulating
+    # from the start, plus any buy after year end that
+    # matches a disposal in this year. Those buys are
+    # shown for audit only: they justify the matching,
+    # they are not counted in holdings. Income (dividends,
+    # interest, withholding tax) is not here: it has its
+    # own report, the dividends-and-interest one. Timeline
+    # order is already chronological, filtering preserves
+    # it, so no re-sort is needed.
     future_buys = {
         (d.buy_date, d.symbol)
         for d in year_disposals
@@ -111,8 +114,13 @@ def events_for_year(
     events = [
         event
         for event in timeline
-        if event.date <= tax_year.end
-        or (event.action == Action.BUY and (event.date, event.symbol) in future_buys)
+        if event.action in (Action.BUY, Action.SELL)
+        and (
+            event.date <= tax_year.end
+            or (
+                event.action == Action.BUY and (event.date, event.symbol) in future_buys
+            )
+        )
     ]
     has_future_buys = any(event.date > tax_year.end for event in events)
     return events, has_future_buys

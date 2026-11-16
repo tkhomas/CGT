@@ -4,13 +4,18 @@ Three files per UK tax year:
 
 - portfolio-<year>.html: holdings at the end of that tax
   year (Section 104 pools, units and cost, so units per
-  stock are easy to verify) plus all events, including
-  internal source file references.
+  stock are easy to verify) plus all buy and sell events,
+  including internal source file references. The events
+  table shows fees in both currencies, so quantity times
+  price against the amount is no longer a puzzle, and a
+  separator row marks where this tax year starts. Zero
+  values are left blank, not printed as zeros.
 - disposals-<year>.html: summary totals and disposals for
-  that tax year only, plus all events since the start, in
-  chronological order. No internal file names here: they
-  mean nothing to HMRC. FX rates instead link to the
-  actual monthly source file they came from.
+  that tax year only, plus all buy and sell events since
+  the start, in chronological order, with the same fees
+  columns and tax-year separator. No internal file names
+  here: they mean nothing to HMRC. FX rates instead link
+  to the actual monthly source file they came from.
 - dividends-interest-<year>.html: dividends and interest
   received in that tax year, with the foreign tax already
   withheld on each, plus the income events themselves.
@@ -148,27 +153,60 @@ def _disposals_rows(disposals: list[Disposal]) -> str:
     return "\n".join(rows)
 
 
-def _events_rows(timeline: list[Event], internal_source: bool) -> str:
-    colspan = 12 if internal_source else 11
+def _num_cell(value: Decimal | int, text: str) -> str:
+    # A zero is not information: leave the cell blank
+    # rather than printing a row of zeros.
+    if value == 0:
+        return "<td class='num'></td>"
+    return f"<td class='num'>{text}</td>"
+
+
+def _events_rows(
+    timeline: list[Event], internal_source: bool, tax_year: TaxYear | None = None
+) -> str:
+    colspan = 14 if internal_source else 13
     if not timeline:
         return f"<tr><td colspan='{colspan}'>No events.</td></tr>"
+    # A separator before the first event of this tax year,
+    # so the year's own events are easy to find among the
+    # accumulated history. There is none when the table
+    # starts in this year already, or when no event falls
+    # in it at all.
+    separator_at: int | None = None
+    if tax_year is not None:
+        for i, event in enumerate(timeline):
+            if event.date >= tax_year.start:
+                if i > 0:
+                    separator_at = i
+                break
     rows = []
-    for event in timeline:
+    for i, event in enumerate(timeline):
+        if i == separator_at:
+            assert tax_year is not None
+            rows.append(
+                f"<tr><td colspan='{colspan}'><strong>Tax year "
+                f"{tax_year.label} starts — 6 April "
+                f"{tax_year.start_year}</strong></td></tr>"
+            )
         pricing = event.pricing
+        currency = _esc(pricing.original_currency.value)
+        original_price = _plain(pricing.original_price) + " " + currency
+        original_amount = _plain(pricing.original_amount) + " " + currency
+        original_fees = _plain(pricing.original_fees) + " " + currency
         row = (
             f"<tr><td>{event.date.isoformat()}</td>"
             f"<td>{_esc(event.action.value)}</td>"
             f"<td>{_esc(event.symbol)}</td>"
-            f"<td class='num'>{event.quantity}</td>"
-            f"<td class='num'>{_plain(pricing.original_price)} "
-            f"{_esc(pricing.original_currency.value)}</td>"
-            f"<td class='num'>{_plain(pricing.original_amount)} "
-            f"{_esc(pricing.original_currency.value)}</td>"
+            f"{_num_cell(event.quantity, str(event.quantity))}"
+            f"{_num_cell(pricing.original_price, original_price)}"
+            f"{_num_cell(pricing.original_amount, original_amount)}"
+            f"{_num_cell(pricing.original_fees, original_fees)}"
             f"<td class='num'>{_plain(pricing.original_units_per_gbp)} "
-            f"{_esc(pricing.original_currency.value)} per £1</td>"
+            f"{currency} per £1</td>"
             f"<td>{_fx_cell(pricing.fx_source)}</td>"
-            f"<td class='num'>{_gbp(pricing.price)}</td>"
-            f"<td class='num'>{_gbp(pricing.amount)}</td>"
+            f"{_num_cell(pricing.price, _gbp(pricing.price))}"
+            f"{_num_cell(pricing.amount, _gbp(pricing.amount))}"
+            f"{_num_cell(pricing.fees, _gbp(pricing.fees))}"
             f"<td>{_esc(event.provider)}</td>"
         )
         if internal_source:
@@ -178,11 +216,17 @@ def _events_rows(timeline: list[Event], internal_source: bool) -> str:
     return "\n".join(rows)
 
 
-def _events_table(timeline: list[Event], internal_source: bool) -> str:
+def _events_table(
+    timeline: list[Event],
+    internal_source: bool,
+    tax_year: TaxYear | None = None,
+) -> str:
     header = (
         "<tr><th>Date</th><th>Action</th><th>Symbol</th><th>Qty</th>"
-        "<th>Original price</th><th>Original amount</th><th>FX rate</th>"
-        "<th>FX source</th><th>GBP price</th><th>GBP amount</th><th>Broker</th>"
+        "<th>Original price</th><th>Original amount</th><th>Original fees</th>"
+        "<th>FX rate</th>"
+        "<th>FX source</th><th>GBP price</th><th>GBP amount</th><th>GBP fees</th>"
+        "<th>Broker</th>"
     )
     if internal_source:
         header += "<th>Internal source</th>"
@@ -191,7 +235,7 @@ def _events_table(timeline: list[Event], internal_source: bool) -> str:
         "<table>\n"
         + header
         + "\n"
-        + _events_rows(timeline, internal_source)
+        + _events_rows(timeline, internal_source, tax_year)
         + "\n</table>"
     )
 
@@ -272,7 +316,7 @@ figure is shown in both currencies.</p>
 
 def _income_rows(income: list[Event]) -> str:
     if not income:
-        return "<tr><td colspan='6'>No dividends or interest.</td></tr>"
+        return "<tr><td colspan='7'>No dividends or interest.</td></tr>"
     rows = []
     for event in income:
         pricing = event.pricing
@@ -280,6 +324,8 @@ def _income_rows(income: list[Event]) -> str:
             f"<tr><td>{event.date.isoformat()}</td>"
             f"<td>{_esc(event.action.value)}</td>"
             f"<td>{_esc(event.symbol)}</td>"
+            f"<td class='num'>{_plain(pricing.original_amount)} "
+            f"{_esc(pricing.original_currency.value)}</td>"
             f"<td class='num'>{_gbp(pricing.amount)}</td>"
             f"<td class='num'>{_plain(pricing.original_units_per_gbp)} "
             f"{_esc(pricing.original_currency.value)} per £1</td>"
@@ -300,8 +346,10 @@ they relate to.</p>
 <p>Currency: all amounts are converted to GBP using the
 HMRC monthly exchange rate for the month of the payment,
 as published in original currency units per £1. GBP amount
-= original amount / rate. FX rates are linked to their
-monthly source files in the table above.</p>
+= original amount / rate. Original amounts are shown in
+the table above, so every figure is shown in both
+currencies, and FX rates are linked to their monthly
+source files.</p>
 <p>Tax already withheld is foreign tax withheld at source --
 in practice US tax taken by the broker -- and none of it is
 HMRC tax. It is shown separately from the gross amounts so
@@ -342,7 +390,8 @@ def build_dividends_interest_report_year(
 
 <h2>Income in {tax_year.label}</h2>
 <table>
-<tr><th>Date</th><th>Action</th><th>Symbol</th><th>GBP amount</th>
+<tr><th>Date</th><th>Action</th><th>Symbol</th><th>Original amount</th>
+<th>GBP amount</th>
 <th>FX rate</th><th>FX source</th></tr>
 {_income_rows(income)}
 </table>
@@ -389,8 +438,8 @@ def build_portfolio_report_year(
 {_holdings_rows(holdings)}
 </table>
 
-<h2>All events</h2>
-{_events_table(events, internal_source=True)}
+<h2>Buy and sell events</h2>
+{_events_table(events, internal_source=True, tax_year=tax_year)}
 
 {_methodology_html()}
 """
@@ -400,8 +449,9 @@ def build_portfolio_report_year(
         f"Tax year {tax_year.label}: 6 April {tax_year.start_year} to "
         f"5 April {tax_year.end_year}. Holdings are Section 104 pools: "
         "units and total cost per stock, so units for any stock are "
-        "easy to verify. All events follow, in chronological order, "
-        f"with internal source references.{future_note}",
+        "easy to verify. Buy and sell events follow, in chronological "
+        "order, with internal source references. A separator row marks "
+        f"where this tax year starts.{future_note}",
         body,
         is_current=is_current,
     )
@@ -438,8 +488,8 @@ def build_disposals_report_year(
 {_disposals_rows(disposals)}
 </table>
 
-<h2>All events</h2>
-{_events_table(events, internal_source=False)}
+<h2>Buy and sell events</h2>
+{_events_table(events, internal_source=False, tax_year=tax_year)}
 
 {_methodology_html()}
 """
@@ -450,9 +500,10 @@ def build_disposals_report_year(
         "5 April "
         f"{tax_year.end_year}. All amounts in GBP, shown to the penny; "
         "calculations use unrounded Decimal values. Only disposals "
-        "with a sell date in this tax year are listed above. All "
-        "events follow, since the start, in chronological order, "
-        "with FX rates linked to their monthly source files. "
+        "with a sell date in this tax year are listed above. Buy "
+        "and sell events follow, since the start, in chronological "
+        "order, with FX rates linked to their monthly source files, "
+        "and a separator row where this tax year starts. "
         f"No local file names are included.{future_note}",
         body,
         is_current=is_current,
