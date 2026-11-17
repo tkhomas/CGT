@@ -91,14 +91,6 @@ def find_inputs(data_dir: Path) -> list[ProviderInput] | None:
 
     inputs = []
     seen_names = set()
-    for entry in sorted(input_dir.iterdir()):
-        if entry.is_file() and not entry.name.startswith("."):
-            print(
-                f"Warning: {entry.name} directly under input/, "
-                f"expected a provider folder, skipped",
-                file=sys.stderr,
-            )
-
     provider_dirs = [
         p
         for p in sorted(input_dir.iterdir())
