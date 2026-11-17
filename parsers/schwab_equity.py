@@ -129,7 +129,9 @@ def _make_event(
             file=sys.stderr,
         )
         return None
-    if quantity <= 0:
+    if quantity == 0:
+        return None
+    if quantity < 0:
         print(
             f"Warning: {path.name}:{line_no}: "
             f"NetSharesDeposited {quantity} not positive, skipped",
