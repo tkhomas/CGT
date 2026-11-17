@@ -36,6 +36,7 @@ from aliases import canonicalise_events, load_aliases
 from fx import FxConverter
 from matching import PoolInsufficientError, State
 from parsers import parse_file
+from parsers.schwab_vesting import correct_vest_dates
 from processors import dispatch
 from providers import find_inputs
 from reporting.html import (
@@ -113,6 +114,19 @@ def main(argv: list[str] | None = None) -> int:
     # become its canonical name before FX, the timeline,
     # and matching ever see them.
     all_parsed = canonicalise_events(all_parsed, aliases)
+
+    # Vesting dates: the equity file dates a vest on the
+    # scheduled day, the personal file's Stock Plan Activity
+    # row says when the shares actually vested. Correct the
+    # equity buys' dates to the "as of" dates, and drop the
+    # Stock Plan Activity rows themselves: they are not CGT
+    # events, they only correct the dates. A mismatch fails
+    # the run, loud, rather than guessing a date.
+    try:
+        all_parsed = correct_vest_dates(all_parsed)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
 
     user_path = data_dir / "fx" / "user-provided.json"
     try:

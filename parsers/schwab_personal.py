@@ -15,7 +15,12 @@ from decimal import Decimal
 from pathlib import Path
 
 from models import IGNORED_ACTIONS, INCOME_ACTIONS, Action, ParsedEvent, ProviderConfig
-from parsers.common import order_events, parse_date, parse_int, parse_money
+from parsers.common import (
+    order_events,
+    parse_dates,
+    parse_int,
+    parse_money,
+)
 
 # Schwab names for the same canonical action. Qualified
 # versus non-qualified is a US distinction, immaterial for
@@ -59,9 +64,61 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], 
                 skipped += 1
                 continue
 
+            # Stock plan activity is not a CGT event, but
+            # it is not ignored either: it says when the
+            # shares actually vested -- its "as of" date,
+            # when the scheduled vest day was not a business
+            # day -- and how many landed. It becomes a
+            # date-correction record, not an event: the
+            # equity file's lapse keeps its price, but its
+            # date is corrected to this one (see
+            # parsers/schwab_vesting.py), and this record is dropped
+            # there. No price here: that is what the equity
+            # file is for.
+            if action is Action.STOCK_PLAN_ACTIVITY:
+                try:
+                    vest_quantity = parse_int(row["Quantity"], "Quantity")
+                except ValueError as exc:
+                    print(
+                        f"Warning: {path.name}:{reader.line_num}: {exc}, skipped",
+                        file=sys.stderr,
+                    )
+                    skipped += 1
+                    continue
+                if vest_quantity <= 0:
+                    print(
+                        f"Warning: {path.name}:{reader.line_num}: "
+                        f"quantity {vest_quantity} not positive, skipped",
+                        file=sys.stderr,
+                    )
+                    skipped += 1
+                    continue
+                # A vesting is acquired on the date it is
+                # effective as of, not the day it was
+                # posted. Without " as of ", the posted
+                # date is the vest date.
+                posted, as_of = parse_dates(row["Date"], provider.date_format)
+                vest_date = as_of if as_of is not None else posted
+                events.append(
+                    ParsedEvent(
+                        date=vest_date,
+                        action=action,
+                        symbol=(row["Symbol"] or "").strip(),
+                        description=(row["Description"] or "").strip(),
+                        quantity=vest_quantity,
+                        original_currency=provider.currency,
+                        original_price=Decimal(0),
+                        original_amount=Decimal(0),
+                        original_fees=Decimal(0),
+                        provider=provider.name,
+                        source_file=path.name,
+                        row=reader.line_num,
+                    )
+                )
+                continue
+
             # Recognised but not CGT events: a wire sent
-            # is cash out, stock plan activity is in the
-            # equity file. Dropped here, silently, so
+            # is cash out. Dropped here, silently, so
             # they never reach the FX converter, the
             # timeline, or the reports.
             if action in IGNORED_ACTIONS:
@@ -71,11 +128,14 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], 
             # the Amount is the value itself, positive for
             # income, negative for tax already withheld.
             # Recorded as written; the trade checks below
-            # are for buys and sells only.
+            # are for buys and sells only. An income row
+            # takes the posted date: the "as of" date, if
+            # any, is not its date.
+            posted, _ = parse_dates(row["Date"], provider.date_format)
             if action in INCOME_ACTIONS:
                 events.append(
                     ParsedEvent(
-                        date=parse_date(row["Date"], provider.date_format),
+                        date=posted,
                         action=action,
                         symbol=(row["Symbol"] or "").strip(),
                         description=(row["Description"] or "").strip(),
@@ -148,7 +208,7 @@ def parse_csv(path: Path, provider: ProviderConfig) -> tuple[list[ParsedEvent], 
                 )
             events.append(
                 ParsedEvent(
-                    date=parse_date(row["Date"], provider.date_format),
+                    date=posted,
                     action=action,
                     symbol=(row["Symbol"] or "").strip(),
                     description=(row["Description"] or "").strip(),

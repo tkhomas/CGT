@@ -15,17 +15,22 @@ from decimal import Decimal, InvalidOperation
 from models import ParsedEvent
 
 
-def parse_date(text: str, date_format: str) -> date:
-    # Schwab can show two dates, e.g. "08/18/2026 as of
-    # 08/17/2026": the first date is the transaction date,
-    # the second is the date it is reported as of. Take the
-    # first. For a lapse that first date is the vest date,
-    # which is the acquisition date.
+def parse_dates(text: str, date_format: str) -> tuple[date, date | None]:
+    # A date field can carry two dates, e.g. "09/18/2026
+    # as of 09/17/2026": the first is the date the row was
+    # posted, the second is the date the activity is
+    # effective as of. Returns both, and lets the caller
+    # decide which one is the event's date. Without
+    # " as of ", the second is None.
     cleaned = text.strip().lower()
     marker = " as of "
-    if marker in cleaned:
-        cleaned = cleaned[: cleaned.index(marker)].strip()
-    return datetime.strptime(cleaned, date_format).date()
+    if marker not in cleaned:
+        return datetime.strptime(cleaned, date_format).date(), None
+    first, second = cleaned.split(marker, 1)
+    return (
+        datetime.strptime(first.strip(), date_format).date(),
+        datetime.strptime(second.strip(), date_format).date(),
+    )
 
 
 def parse_money(text: str | None) -> Decimal:

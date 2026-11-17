@@ -5,6 +5,11 @@ returns the same thing -- a list of ParsedEvents and a
 count of skipped rows -- so FX, the timeline, the matcher
 and the reports never know which format a buy came from.
 A new format means a new module and one line in PARSERS.
+
+Cross-file assembly lives here too: parsers/schwab_vesting.py
+joins events from different files -- a vesting record
+correcting an equity buy's date -- after the symbols
+have been canonicalised.
 """
 
 from __future__ import annotations

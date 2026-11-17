@@ -10,6 +10,17 @@ from pathlib import Path
 class Action(Enum):
     BUY = "buy"
     SELL = "sell"
+    # A vesting, from an equity (stock plan) file: the
+    # shares that vested, at the fair market value price.
+    # It is not a buy yet -- the vesting join
+    # (parsers/schwab_vesting.py) turns it into one, with the
+    # date corrected to the day the shares actually
+    # vested. It never reaches the timeline, the matcher,
+    # or a processor, so it is not in ACTION_ORDER, and
+    # no processor is needed for it. A lapse that reaches
+    # the timeline means the join did not run, and fails
+    # loud there.
+    LAPSE = "lapse"
     STOCK_PLAN_ACTIVITY = "stock plan activity"
     WIRE_SENT = "wire sent"
     MISC_CASH_ENTRY = "misc cash entry"
@@ -26,14 +37,12 @@ class Action(Enum):
 
 # Recognised but not CGT events, so they are dropped at
 # parsing and never reach the timeline, the FX converter,
-# or a processor. Stock plan activity is in the equity
-# file; a wire sent is cash out; a misc cash entry and a
-# service fee are cash movements with no tax relation.
-# They are listed here only so they are recognised rather
-# than warned about as unrecognised.
+# or a processor. A wire sent is cash out; a misc cash
+# entry and a service fee are cash movements with no tax
+# relation. They are listed here only so they are
+# recognised rather than warned about as unrecognised.
 IGNORED_ACTIONS: frozenset[Action] = frozenset(
     {
-        Action.STOCK_PLAN_ACTIVITY,
         Action.WIRE_SENT,
         Action.MISC_CASH_ENTRY,
         Action.SERVICE_FEE,
@@ -57,7 +66,9 @@ INCOME_ACTIONS: frozenset[Action] = frozenset(
 # Global ordering within a single date. Earlier in the
 # list means earlier in processing that day.
 # Ignored actions are dropped at parsing, so they are not
-# in this list. A new action is added to this list in the
+# in this list. A lapse is turned into a buy by the
+# vesting join before the timeline, so it is not in this
+# list either. A new action is added to this list in the
 # same chunk as its processor, never before.
 ACTION_ORDER: list[Action] = [
     Action.SELL,

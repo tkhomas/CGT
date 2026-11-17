@@ -116,13 +116,13 @@ class EquityTests(unittest.TestCase):
         with redirect_stderr(err):
             return parse_csv(path, _provider())
 
-    def test_lapse_pair_is_a_buy_of_net_shares_at_fmv(self):
+    def test_lapse_pair_is_a_lapse_of_net_shares_at_fmv(self):
         header = ",".join(HEADER) + "\n"
         events, skipped = self._parse(header + _lapse_pair())
         self.assertEqual(skipped, 0)
         self.assertEqual(len(events), 1)
         event = events[0]
-        self.assertEqual(event.action, Action.BUY)
+        self.assertEqual(event.action, Action.LAPSE)
         self.assertEqual(event.date, date(2021, 3, 15))
         self.assertEqual(event.symbol, "ACME")
         self.assertEqual(event.description, "Restricted Stock Lapse")

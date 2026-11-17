@@ -23,7 +23,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from models import Action, Currency, ProviderConfig
-from parsers.common import parse_date, parse_money
+from parsers.common import parse_dates, parse_money
 from parsers.schwab_personal import parse_action, parse_csv
 from providers import find_inputs, load_provider_config
 
@@ -52,30 +52,39 @@ HEADER = [
 
 
 class ParseHelpersTests(unittest.TestCase):
-    def test_parse_date_uses_the_provider_format(self):
+    def test_parse_dates_uses_the_provider_format(self):
         # The same calendar day written in two provider
-        # formats must give the same date; the format is
+        # formats must give the same dates; the format is
         # per-provider config, never assumed.
         cases = [
-            ("01/15/2025", "%m/%d/%Y", date(2025, 1, 15)),
-            ("15/01/2025", "%d/%m/%Y", date(2025, 1, 15)),
+            ("01/15/2025", "%m/%d/%Y", (date(2025, 1, 15), None)),
+            ("15/01/2025", "%d/%m/%Y", (date(2025, 1, 15), None)),
         ]
         for text, fmt, expected in cases:
             with self.subTest(text=text):
-                self.assertEqual(parse_date(text, fmt), expected)
+                self.assertEqual(parse_dates(text, fmt), expected)
 
-    def test_parse_date_takes_first_date_when_two_dates_are_given(self):
-        # Schwab can show "08/18/2026 as of 08/17/2026":
-        # the first date is the transaction date, the
-        # second is the date it is reported as of.
+    def test_parse_dates_returns_both_dates_when_two_are_given(self):
+        # Schwab can show "09/18/2026 as of 09/17/2026":
+        # the first date is the posted date, the second is
+        # the date the activity is effective as of. The
+        # caller decides which one is the event's date.
         cases = [
-            ("08/18/2026 as of 08/17/2026", "%m/%d/%Y", date(2026, 8, 18)),
-            ("18/08/2026 as of 17/08/2026", "%d/%m/%Y", date(2026, 8, 18)),
-            ("08/18/2026", "%m/%d/%Y", date(2026, 8, 18)),
+            (
+                "09/18/2026 as of 09/17/2026",
+                "%m/%d/%Y",
+                (date(2026, 9, 18), date(2026, 9, 17)),
+            ),
+            (
+                "18/09/2026 as of 17/09/2026",
+                "%d/%m/%Y",
+                (date(2026, 9, 18), date(2026, 9, 17)),
+            ),
+            ("09/18/2026", "%m/%d/%Y", (date(2026, 9, 18), None)),
         ]
         for text, fmt, expected in cases:
             with self.subTest(text=text):
-                self.assertEqual(parse_date(text, fmt), expected)
+                self.assertEqual(parse_dates(text, fmt), expected)
 
     def test_parse_money_strips_symbols_commas_and_space(self):
         # Money cleanup only: it never decides the currency,
@@ -135,9 +144,12 @@ class ParseHelpersTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(parse_action(text, "test.csv", 2), expected)
 
-    def test_parse_action_recognises_ignored_actions(self):
-        # Ignored actions are recognised, not unrecognised:
-        # they must not warn and must not be skipped.
+    def test_parse_action_recognises_known_actions(self):
+        # Actions that are not CGT events are recognised,
+        # not unrecognised: they must not warn and must not
+        # be skipped as unknown. Stock plan activity is
+        # recognised and used (a vesting record); the rest
+        # are recognised and dropped.
         cases = [
             ("Stock Plan Activity", Action.STOCK_PLAN_ACTIVITY),
             ("stock plan activity", Action.STOCK_PLAN_ACTIVITY),
@@ -624,8 +636,8 @@ class ParseCsvTests(unittest.TestCase):
                     "ACME",
                     "trade",
                     "1",
-                    "$2033.0051",
-                    "-$2033.01",
+                    "$512.0049",
+                    "-$512.00",
                     "$0.00",
                 ]
             ],
@@ -636,11 +648,11 @@ class ParseCsvTests(unittest.TestCase):
         self.assertEqual(err.getvalue(), "")
         self.assertEqual(skipped, 0)
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].original_amount, Decimal("2033.01"))
+        self.assertEqual(events[0].original_amount, Decimal("512.00"))
 
     def test_parse_csv_bond_price_in_percent_of_par(self):
         # A bond is quoted as a percent of par, not dollars
-        # per unit: 99.2344 means $0.992344 per $1 of face
+        # per unit: 98.7654 means $0.987654 per $1 of face
         # value. The price is stored as written -- it is
         # only ever a check and a display, never the value
         # -- so the row warns, like any row whose price does
@@ -656,8 +668,8 @@ class ParseCsvTests(unittest.TestCase):
                     "ACME",
                     "US TREASURY NOTE",
                     "1000",
-                    "$99.2344",
-                    "-$993.34",
+                    "$98.7654",
+                    "-$990.65",
                     "$1.00",
                 ]
             ],
@@ -668,8 +680,8 @@ class ParseCsvTests(unittest.TestCase):
         self.assertNotEqual(err.getvalue(), "")
         self.assertEqual(skipped, 0)
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].original_price, Decimal("99.2344"))
-        self.assertEqual(events[0].original_amount, Decimal("993.34"))
+        self.assertEqual(events[0].original_price, Decimal("98.7654"))
+        self.assertEqual(events[0].original_amount, Decimal("990.65"))
 
     def test_parse_csv_without_a_fees_column_gives_zero_fees(self):
         header = [
@@ -700,19 +712,22 @@ class ParseCsvTests(unittest.TestCase):
         self.assertEqual(skipped, 0)
         self.assertEqual(events[0].original_fees, Decimal(0))
 
-    def test_parse_csv_ignores_stock_plan_activity_and_wire_sent(self):
-        # Both rows shaped like a real Schwab export, with
-        # made-up tickers. Both are dropped at parsing,
-        # silently: the stock plan row has a quantity but
-        # no price, the wire row has no quantity at all,
-        # and neither is a CGT event. A normal Buy in the
-        # same file still parses as usual.
+    def test_parse_csv_stock_plan_activity_is_a_vesting_record(self):
+        # A Stock Plan Activity row is not a CGT event, but
+        # it is not dropped either: it becomes a
+        # date-correction record for the vesting join, with
+        # the "as of" date (the vest date), the symbol, and
+        # the units that landed. A Wire Sent row is still
+        # dropped silently. A normal Buy in the same file
+        # still parses as usual. Rows are newest first, as
+        # Schwab exports them; the events come out oldest
+        # first.
         path = _write_csv(
             self.dir / "transactions.csv",
             HEADER,
             [
                 [
-                    "08/18/2026 as of 08/17/2026",
+                    "09/18/2026 as of 09/17/2026",
                     "Stock Plan Activity",
                     "ACME",
                     "ACME HOLDINGS INC CLASS A",
@@ -748,12 +763,81 @@ class ParseCsvTests(unittest.TestCase):
             events, skipped = parse_csv(path, _provider())
         self.assertEqual(err.getvalue(), "")
         self.assertEqual(skipped, 0)
-        self.assertEqual(len(events), 1)
+        self.assertEqual(len(events), 2)
 
-        buy = events[0]
-        self.assertEqual(buy.action, Action.BUY)
+        vesting = next(e for e in events if e.action is Action.STOCK_PLAN_ACTIVITY)
+        self.assertEqual(vesting.date, date(2026, 9, 17))
+        self.assertEqual(vesting.symbol, "ACME")
+        self.assertEqual(vesting.quantity, 1)
+        self.assertEqual(vesting.original_price, Decimal(0))
+        self.assertEqual(vesting.original_amount, Decimal(0))
+
+        buy = next(e for e in events if e.action is Action.BUY)
         self.assertEqual(buy.date, date(2026, 9, 5))
         self.assertEqual(buy.symbol, "ACME")
+
+    def test_parse_csv_stock_plan_activity_without_as_of_uses_its_date(self):
+        # No "as of" on the row: the vest date is the date
+        # itself.
+        path = _write_csv(
+            self.dir / "transactions.csv",
+            HEADER,
+            [
+                [
+                    "09/17/2026",
+                    "Stock Plan Activity",
+                    "ACME",
+                    "ACME HOLDINGS INC CLASS A",
+                    "4",
+                    "",
+                    "",
+                    "",
+                ],
+            ],
+        )
+        events, skipped = parse_csv(path, _provider())
+        self.assertEqual(skipped, 0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].date, date(2026, 9, 17))
+        self.assertEqual(events[0].quantity, 4)
+
+    def test_parse_csv_stock_plan_activity_with_bad_quantity_is_skipped(self):
+        # A vesting record with no usable quantity cannot
+        # be matched to a buy, so it warns and is skipped
+        # like any other bad row.
+        path = _write_csv(
+            self.dir / "transactions.csv",
+            HEADER,
+            [
+                [
+                    "09/17/2026",
+                    "Stock Plan Activity",
+                    "ACME",
+                    "ACME HOLDINGS INC CLASS A",
+                    "four",
+                    "",
+                    "",
+                    "",
+                ],
+                [
+                    "09/17/2026",
+                    "Stock Plan Activity",
+                    "ACME",
+                    "ACME HOLDINGS INC CLASS A",
+                    "0",
+                    "",
+                    "",
+                    "",
+                ],
+            ],
+        )
+        err = io.StringIO()
+        with redirect_stderr(err):
+            events, skipped = parse_csv(path, _provider())
+        self.assertEqual(len(events), 0)
+        self.assertEqual(skipped, 2)
+        self.assertIn("is not a number", err.getvalue())
+        self.assertIn("not positive", err.getvalue())
 
     def test_parse_csv_reads_income_rows(self):
         # Rows shaped like a Schwab export, with made-up

@@ -335,6 +335,16 @@ class EndToEndTests(unittest.TestCase):
             with self.subTest(report=path.name):
                 self.assertNotIn("{future_note}", path.read_text(encoding="utf-8"))
 
+    def test_events_table_has_no_stock_plan_activity(self) -> None:
+        # The Stock Plan Activity rows are date-correction
+        # records, not events: they are consumed by the
+        # vesting join and must not leak into any report.
+        for name in ("disposals-2025-26.html", "portfolio-2025-26.html"):
+            with self.subTest(report=name):
+                html = self._read(name)
+                events = html.split("<h2>Buy and sell events</h2>", 1)[1]
+                self.assertNotIn("<td>stock plan activity</td>", events)
+
     def test_disposals_report_has_no_internal_file_names(self) -> None:
         html = self._read("disposals-2025-26.html")
         self.assertIn("No local file names are included.", html)
