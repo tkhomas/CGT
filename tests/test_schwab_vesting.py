@@ -75,9 +75,9 @@ class CorrectVestDatesTests(unittest.TestCase):
         self.assertEqual(events[0].quantity, 5)
         self.assertEqual(events[0].original_price, Decimal("50.00"))
 
-    def test_two_vests_in_one_month_pair_in_order(self):
+    def test_two_vests_in_one_month_pair_by_quantity(self):
         # Two vests in April, different quantities: the
-        # earlier record pairs with the earlier lapse, and
+        # pairing is by the shares, not by file order, and
         # each lapse becomes a buy with its own record's
         # date. The order of the returned list is the input
         # order, so the buys are found by quantity, not
@@ -119,10 +119,7 @@ class CorrectVestDatesTests(unittest.TestCase):
     def test_lapse_with_no_records_becomes_a_buy_as_it_is(self):
         # No Stock Plan Activity rows at all means there is
         # no correction source: the equity dates stand, as
-        # before, and the lapse still becomes a buy. This
-        # is not a mismatch -- a mismatch is a record that
-        # disagrees, or a lapse left unmatched when other
-        # records exist.
+        # before, and the lapse still becomes a buy.
         events = correct_vest_dates(
             [
                 _buy(date(2025, 4, 10), quantity=6),
@@ -136,44 +133,96 @@ class CorrectVestDatesTests(unittest.TestCase):
         self.assertEqual(vest.action, Action.BUY)
         self.assertEqual(vest.date, date(2025, 4, 15))
 
-    def test_quantity_mismatch_stops(self):
-        with self.assertRaises(ValueError):
-            correct_vest_dates(
-                [
-                    _lapse(date(2022, 5, 15), quantity=5),
-                    _vesting_record(date(2022, 5, 16), quantity=4),
-                ]
-            )
+    def test_quantities_do_not_have_to_agree(self):
+        # Seven vested, six deposited: the record carries
+        # the gross, the lapse carries the net. They still
+        # pair, and the buy is the deposited six, with the
+        # record's date. The quantities are not a check.
+        events = correct_vest_dates(
+            [
+                _lapse(date(2025, 4, 15), quantity=6),
+                _vesting_record(date(2025, 4, 16), quantity=7),
+            ]
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].action, Action.BUY)
+        self.assertEqual(events[0].date, date(2025, 4, 16))
+        self.assertEqual(events[0].quantity, 6)
 
-    def test_vesting_record_with_no_lapse_stops(self):
-        with self.assertRaises(ValueError):
-            correct_vest_dates(
-                [
-                    _vesting_record(date(2022, 5, 16), quantity=5),
-                ]
-            )
+    def test_same_day_vests_pair_by_quantity_not_file_order(self):
+        # Four vests on one day, of 1, 2, 3 and 4 shares:
+        # the two files list them in different orders, so
+        # pairing by file order would cross them. Pairing
+        # by the shares puts each lapse with its own
+        # record, and all four become buys on the vest
+        # date.
+        events = correct_vest_dates(
+            [
+                _vesting_record(date(2025, 4, 16), quantity=1),
+                _vesting_record(date(2025, 4, 16), quantity=2),
+                _vesting_record(date(2025, 4, 16), quantity=3),
+                _vesting_record(date(2025, 4, 16), quantity=4),
+                _lapse(date(2025, 4, 15), quantity=4),
+                _lapse(date(2025, 4, 15), quantity=3),
+                _lapse(date(2025, 4, 15), quantity=2),
+                _lapse(date(2025, 4, 15), quantity=1),
+            ]
+        )
+        self.assertEqual(len(events), 4)
+        self.assertEqual(sorted(e.quantity for e in events), [1, 2, 3, 4])
+        for event in events:
+            self.assertEqual(event.action, Action.BUY)
+            self.assertEqual(event.date, date(2025, 4, 16))
 
-    def test_lapse_missing_its_record_stops(self):
+    def test_vesting_record_with_no_lapse_is_dropped(self):
+        # A record with no lapse: a vesting where
+        # everything was withheld, or a lapse the equity
+        # file does not have. The record has no price, so
+        # it cannot become a buy; it is dropped, with a
+        # warning, and the run goes on.
+        events = correct_vest_dates(
+            [
+                _vesting_record(date(2022, 5, 16), quantity=5),
+            ]
+        )
+        self.assertEqual(events, [])
+
+    def test_lapse_with_no_record_keeps_the_scheduled_date(self):
         # Two lapses in a month, one record: the second
-        # lapse has no partner, so the run stops rather
-        # than guessing its date.
-        with self.assertRaises(ValueError):
-            correct_vest_dates(
-                [
-                    _lapse(date(2025, 4, 15), quantity=6),
-                    _lapse(date(2025, 4, 16), quantity=3),
-                    _vesting_record(date(2025, 4, 16), quantity=6),
-                ]
-            )
+        # lapse has no partner, so it keeps the scheduled
+        # date, with a warning, rather than stopping the
+        # run. The buy is still real.
+        events = correct_vest_dates(
+            [
+                _lapse(date(2025, 4, 15), quantity=6),
+                _lapse(date(2025, 4, 16), quantity=3),
+                _vesting_record(date(2025, 4, 16), quantity=6),
+            ]
+        )
+        self.assertEqual(len(events), 2)
+        by_quantity = {event.quantity: event for event in events}
+        self.assertEqual(by_quantity[6].action, Action.BUY)
+        self.assertEqual(by_quantity[6].date, date(2025, 4, 16))
+        self.assertEqual(by_quantity[3].action, Action.BUY)
+        self.assertEqual(by_quantity[3].date, date(2025, 4, 16))
 
-    def test_extra_record_in_a_month_with_two_lapses_stops(self):
-        with self.assertRaises(ValueError):
-            correct_vest_dates(
-                [
-                    _lapse(date(2025, 4, 15), quantity=6),
-                    _lapse(date(2025, 4, 16), quantity=3),
-                    _vesting_record(date(2025, 4, 16), quantity=6),
-                    _vesting_record(date(2025, 4, 17), quantity=3),
-                    _vesting_record(date(2025, 4, 18), quantity=2),
-                ]
-            )
+    def test_extra_record_in_a_month_is_dropped(self):
+        # Two lapses, three records: the extra record has
+        # no lapse, so it is dropped, with a warning, and
+        # the two lapses become buys with their records'
+        # dates.
+        events = correct_vest_dates(
+            [
+                _lapse(date(2025, 4, 15), quantity=6),
+                _lapse(date(2025, 4, 16), quantity=3),
+                _vesting_record(date(2025, 4, 16), quantity=6),
+                _vesting_record(date(2025, 4, 17), quantity=3),
+                _vesting_record(date(2025, 4, 18), quantity=2),
+            ]
+        )
+        self.assertEqual(len(events), 2)
+        by_quantity = {event.quantity: event for event in events}
+        self.assertEqual(by_quantity[6].action, Action.BUY)
+        self.assertEqual(by_quantity[6].date, date(2025, 4, 16))
+        self.assertEqual(by_quantity[3].action, Action.BUY)
+        self.assertEqual(by_quantity[3].date, date(2025, 4, 17))
